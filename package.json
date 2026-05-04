@@ -1,0 +1,45 @@
+{
+  "name": "echolingo-app-v2",
+  "main": "expo-router/entry",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "check:release-env": "node scripts/check-release-env.js"
+  },
+  "dependencies": {
+    "@shopify/react-native-skia": "^2.4.18",
+    "expo": "~55.0.15",
+    "expo-apple-authentication": "~55.0.13",
+    "expo-audio": "~55.0.13",
+    "expo-blur": "~55.0.14",
+    "expo-file-system": "~55.0.16",
+    "expo-iap": "^4.2.3",
+    "expo-image": "~55.0.8",
+    "expo-image-picker": "~55.0.19",
+    "expo-router": "~55.0.12",
+    "expo-secure-store": "~55.0.13",
+    "expo-splash-screen": "~55.0.18",
+    "expo-status-bar": "~55.0.5",
+    "expo-system-ui": "~55.0.15",
+    "expo-video": "~55.0.15",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.4",
+    "react-native-gesture-handler": "2.30.0",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-web": "~0.21.0",
+    "react-native-webrtc": "^124.0.7",
+    "react-native-worklets": "0.7.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2"
+  }
+}
