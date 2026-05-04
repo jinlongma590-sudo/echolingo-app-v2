@@ -2,12 +2,15 @@ import { useGlobalSearchParams } from 'expo-router';
 import React, { createContext, useContext, useMemo } from 'react';
 
 import { SCENARIOS } from '@/data/scenarios';
+import { resolveCoachProfile } from '@/data/coachProfiles';
 import { useSpeakingV2Runtime } from '@/hooks/speaking/useSpeakingV2Runtime';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
 
 type SpeakingV2Scenario = (typeof SCENARIOS)[number];
+type SpeakingV2CoachProfile = ReturnType<typeof resolveCoachProfile>;
 
 export type SpeakingV2RuntimeContextValue = {
+  coachProfile: SpeakingV2CoachProfile;
   isLoggedIn: boolean;
   runtime: ReturnType<typeof useSpeakingV2Runtime>;
   scenario: SpeakingV2Scenario;
@@ -28,26 +31,32 @@ export function SpeakingV2RuntimeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const params = useGlobalSearchParams<{ scenarioId?: string }>();
+  const params = useGlobalSearchParams<{ scenarioId?: string; coachId?: string }>();
   const appSession = useAppSession();
 
   const scenarioId = Array.isArray(params.scenarioId)
     ? params.scenarioId[0]
     : params.scenarioId;
+  const coachId = Array.isArray(params.coachId)
+    ? params.coachId[0]
+    : params.coachId;
 
   const scenario = useMemo(() => resolveScenario(scenarioId), [scenarioId]);
+  const coachProfile = useMemo(() => resolveCoachProfile(coachId), [coachId]);
   const runtime = useSpeakingV2Runtime({
+    coachProfile,
     session: appSession.session,
     scenario,
   });
 
   const value = useMemo<SpeakingV2RuntimeContextValue>(
     () => ({
+      coachProfile,
       isLoggedIn: appSession.status === 'authenticated',
       runtime,
       scenario,
     }),
-    [appSession.status, runtime, scenario],
+    [appSession.status, coachProfile, runtime, scenario],
   );
 
   return (

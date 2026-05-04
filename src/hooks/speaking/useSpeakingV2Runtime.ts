@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { AppState } from 'react-native';
 
 import type { Scenario } from '@/data/scenarios';
+import type { CoachProfile } from '@/data/coachProfiles';
 import {
   completeSpeakingSession,
   createSpeakingRealtimeCall,
@@ -16,6 +17,7 @@ import {
   resetSpeakingRealtimeAudioRoute,
 } from '@/services/audio/speakingRealtimeAudioRoute';
 import { SpeakingRealtimeClient } from '@/services/realtime/speakingRealtimeClient';
+import { pickCoachSfxCue } from '@/services/audio/coachSfx';
 import type { StoredSession } from '@/types/auth';
 import type {
   SpeakingV2MetricScore,
@@ -248,7 +250,7 @@ function buildTranscriptJsonFromTurns(
   }));
 }
 
-function buildV2SessionInstructions(scenario: Scenario): string {
+function buildV2SessionInstructions(scenario: Scenario, coachProfile: CoachProfile): string {
   return [
     scenario.systemPrompt,
     'Important rules for EchoLingo Speaking V2 realtime voice conversation:',
@@ -260,6 +262,10 @@ function buildV2SessionInstructions(scenario: Scenario): string {
     'Do not switch topics unless the learner clearly does so.',
     'If the learner is unclear, ask one short clarification question instead of giving a lecture.',
     'Start the conversation naturally when requested.',
+    `Coach profile: ${coachProfile.name}.`,
+    `Coach accent hint: ${coachProfile.accentHint}.`,
+    `Coach profanity level: ${coachProfile.profanityLevel}.`,
+    coachProfile.instructions,
   ].join(' ');
 }
 
@@ -531,9 +537,11 @@ async function buildReviewPayload(params: {
 }
 
 export function useSpeakingV2Runtime({
+  coachProfile,
   session,
   scenario,
 }: {
+  coachProfile: CoachProfile;
   session: StoredSession | null;
   scenario: Scenario;
 }) {
@@ -757,6 +765,14 @@ export function useSpeakingV2Runtime({
         finalTextLength: finalText.length,
         source: source === 'transcript_done' ? 'transcript_done' : 'response_done_fallback',
       }));
+      const sfxCue = pickCoachSfxCue(coachProfile.sfxProfile, finalText);
+      if (sfxCue) {
+        console.log('[V2][runtime] coach_sfx_cue_ready', JSON.stringify({
+          coachId: coachProfile.id,
+          sfxProfile: coachProfile.sfxProfile,
+          cue: sfxCue,
+        }));
+      }
       console.log('[V2][runtime] v2_realtime_assistant_turn_mapping_summary', JSON.stringify({
         responseId,
         accumulatedLength: sanitizeTranscriptText(accumulator.text).length,
@@ -773,7 +789,7 @@ export function useSpeakingV2Runtime({
         source: source === 'transcript_done' ? 'assistant_transcript_done' : 'assistant_response_done_fallback',
       });
     },
-    [getAssistantAccumulator, upsertConversationTurn],
+    [coachProfile.id, coachProfile.sfxProfile, getAssistantAccumulator, upsertConversationTurn],
   );
 
   const beginTimingStep = useCallback((step: string) => {
@@ -938,7 +954,7 @@ export function useSpeakingV2Runtime({
         ephemeralKey: tokenResponse.clientSecret,
         model: tokenResponse.model,
         voice: tokenResponse.voice,
-        sessionInstructions: buildV2SessionInstructions(scenario),
+        sessionInstructions: buildV2SessionInstructions(scenario, coachProfile),
         inputTranscriptionPrompt: buildV2InputTranscriptionPrompt(scenario),
         createCall: async (offerSdp) => {
           if (!isActiveCall()) {
@@ -970,7 +986,7 @@ export function useSpeakingV2Runtime({
       }
       return true;
     },
-    [forwardTransportEvent, scenario, syncSpeakerRoute],
+    [coachProfile, forwardTransportEvent, scenario, syncSpeakerRoute],
   );
 
   const attemptReconnect = useCallback(
