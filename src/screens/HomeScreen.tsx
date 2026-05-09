@@ -410,17 +410,22 @@ export function HomeScreen() {
     localGoalSource,
   });
   const homeFocusedRef = useRef(false);
+  const refreshHomeRecommendationsRef = useRef(refreshHomeRecommendations);
   const sessionRefreshKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    refreshHomeRecommendationsRef.current = refreshHomeRecommendations;
+  }, [refreshHomeRecommendations]);
 
   useFocusEffect(
     useCallback(() => {
       homeFocusedRef.current = true;
-      void refreshHomeRecommendations('home_focus');
+      void refreshHomeRecommendationsRef.current('home_focus');
 
       return () => {
         homeFocusedRef.current = false;
       };
-    }, [refreshHomeRecommendations]),
+    }, []),
   );
 
   useEffect(() => {
@@ -429,13 +434,13 @@ export function HomeScreen() {
         return;
       }
 
-      void refreshHomeRecommendations('app_active_home');
+      void refreshHomeRecommendationsRef.current('app_active_home');
     });
 
     return () => {
       subscription.remove();
     };
-  }, [refreshHomeRecommendations]);
+  }, []);
 
   useEffect(() => {
     if (session.isHydrating || session.status !== 'authenticated') {
@@ -448,9 +453,8 @@ export function HomeScreen() {
     }
 
     sessionRefreshKeyRef.current = refreshKey;
-    void refreshHomeRecommendations('session_restored');
+    void refreshHomeRecommendationsRef.current('session_restored');
   }, [
-    refreshHomeRecommendations,
     session.isHydrating,
     session.session?.user?.id,
     session.status,

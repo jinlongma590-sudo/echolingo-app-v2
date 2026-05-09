@@ -35,6 +35,7 @@ import { useEntitlementGuard } from '@/hooks/useEntitlementGuard';
 import { useEpisodePlayerController } from '@/hooks/useEpisodePlayerController';
 import { addFavorite, fetchUserFavorites, removeFavoriteByTarget } from '@/services/api/favorites';
 import { upsertLearningProgress } from '@/services/api/learning';
+import { invalidateLearningRecords } from '@/store/learningRecordsStore';
 import { addNote, fetchNotesForSentence, updateNote } from '@/services/api/sentenceNotes';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
 import { EpisodeScreenTablet } from '@/screens/EpisodeScreenTablet';
@@ -3568,6 +3569,11 @@ export function EpisodeScreen() {
 
   const handleModeChange = useCallback(
     (next: TranscriptMode) => {
+      const hasPendingModeSwitch = selectedMode !== committedModeRef.current || !deferredRowsReady;
+      if (next === selectedMode || (next === committedModeRef.current && !hasPendingModeSwitch)) {
+        return;
+      }
+
       const requestId = modeRequestIdRef.current + 1;
       modeRequestIdRef.current = requestId;
       const startedAt = Date.now();
@@ -3622,7 +3628,15 @@ export function EpisodeScreen() {
         setSelectedMode(committedModeRef.current);
       })();
     },
-    [commitModeAfterPaint, getCachedPremiumDecision, guardEntry, sentences.length, shouldUseTabletLayout],
+    [
+      commitModeAfterPaint,
+      deferredRowsReady,
+      getCachedPremiumDecision,
+      guardEntry,
+      selectedMode,
+      sentences.length,
+      shouldUseTabletLayout,
+    ],
   );
 
   const loadSentenceNote = useCallback(
@@ -3800,6 +3814,7 @@ export function EpisodeScreen() {
           status,
           incrementReviewCount,
         });
+        invalidateLearningRecords('episode_progress_saved');
       } catch (syncError) {
         console.warn('[episode][learning_progress] sync_failed', {
           episodeId,
@@ -4774,9 +4789,7 @@ export function EpisodeScreen() {
           onTranscriptMomentumEnd={handleTranscriptScrollEnd}
           onBack={() => router.back()}
           onOpenSettings={() => setShowSettingsSheet(true)}
-          onChangeMode={(next) => {
-            void handleModeChange(next);
-          }}
+          onChangeMode={handleModeChange}
           controlProps={tabletControlProps}
           noteSheet={tabletNoteSheet}
         />

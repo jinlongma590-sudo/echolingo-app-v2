@@ -21,6 +21,7 @@ import {
   type SentenceNoteWithDetails,
 } from '@/services/api/sentenceNotes';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import { safeBack } from '@/navigation/safeBack';
 import { useAppTheme } from '@/theme/AppThemeProvider';
 import {
@@ -325,13 +326,14 @@ export function NotesScreen() {
     setLoading(true);
     setError(null);
     try {
-      setNotes(await fetchUserNotesWithDetails(session.session));
+      const next = await retryWithSessionRefresh({
+        request: (activeSession) => fetchUserNotesWithDetails(activeSession),
+        refreshSession: session.refreshSession,
+        getSession: () => session.session,
+        isUnauthorizedError: isExpiredSessionError,
+      });
+      setNotes(next);
     } catch (err) {
-      if (isExpiredSessionError(err)) {
-        setNotes([]);
-        await session.invalidateSession();
-        return;
-      }
       setError(toFriendlyNotesError(err));
     } finally {
       setLoading(false);
@@ -339,6 +341,11 @@ export function NotesScreen() {
   }, [session]);
 
   useEffect(() => {
+    if (session.isHydrating) {
+      setLoading(true);
+      return;
+    }
+
     if (sessionExpired) {
       setNotes([]);
       setError(null);
@@ -353,7 +360,7 @@ export function NotesScreen() {
       setError(null);
       setLoading(false);
     }
-  }, [isLoggedIn, load, sessionExpired]);
+  }, [isLoggedIn, load, session.isHydrating, sessionExpired]);
 
   const episodeCount = useMemo(
     () => new Set(notes.map((note) => note.episode?.id ?? note.episode_id)).size,
@@ -364,8 +371,7 @@ export function NotesScreen() {
 
   const handleDelete = useCallback(
     (note: SentenceNoteWithDetails) => {
-      const currentSession = session.session;
-      if (!currentSession) return;
+      if (!session.session) return;
 
       Alert.alert('删除笔记', '删除后不可恢复，确定要删除这条笔记吗？', [
         { text: '取消', style: 'cancel' },
@@ -377,17 +383,17 @@ export function NotesScreen() {
               setDeletingId(note.id);
               setError(null);
               try {
-                await deleteNote(currentSession, note.id);
+                await retryWithSessionRefresh({
+                  request: (activeSession) => deleteNote(activeSession, note.id),
+                  refreshSession: session.refreshSession,
+                  getSession: () => session.session,
+                  isUnauthorizedError: isExpiredSessionError,
+                });
                 setNotes((prev) => prev.filter((item) => item.id !== note.id));
                 if (editingNote?.id === note.id) {
                   setEditingNote(null);
                 }
               } catch (err) {
-                if (isExpiredSessionError(err)) {
-                  setNotes([]);
-                  await session.invalidateSession();
-                  return;
-                }
                 setError(toFriendlyNotesError(err));
               } finally {
                 setDeletingId(null);
@@ -397,13 +403,12 @@ export function NotesScreen() {
         },
       ]);
     },
-    [editingNote?.id, session.session],
+    [editingNote?.id, session],
   );
 
   const handleSaveEdit = useCallback(
     async (nextValue: string) => {
-      const currentSession = session.session;
-      if (!currentSession || !editingNote) return;
+      if (!session.session || !editingNote) return;
       const trimmed = nextValue.trim();
       if (!trimmed) {
         Alert.alert('笔记内容不能为空', '请先输入内容，再保存修改。');
@@ -413,7 +418,12 @@ export function NotesScreen() {
       setSavingEdit(true);
       setError(null);
       try {
-        const updated = await updateNote(currentSession, editingNote.id, trimmed);
+        const updated = await retryWithSessionRefresh({
+          request: (activeSession) => updateNote(activeSession, editingNote.id, trimmed),
+          refreshSession: session.refreshSession,
+          getSession: () => session.session,
+          isUnauthorizedError: isExpiredSessionError,
+        });
         setNotes((prev) =>
           prev.map((item) =>
             item.id === editingNote.id
@@ -427,12 +437,6 @@ export function NotesScreen() {
         );
         setEditingNote(null);
       } catch (err) {
-        if (isExpiredSessionError(err)) {
-          setEditingNote(null);
-          setNotes([]);
-          await session.invalidateSession();
-          return;
-        }
         setError(toFriendlyNotesError(err));
       } finally {
         setSavingEdit(false);
@@ -449,7 +453,7 @@ export function NotesScreen() {
     </View>
   );
 
-  if (!isLoggedIn && !sessionExpired) {
+  if (!session.isHydrating && !isLoggedIn && !sessionExpired) {
     return (
       <AppScreenShell header={header} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
         <SurfaceCard style={{ padding: 20 }}>

@@ -2,7 +2,7 @@
   "expo": {
     "name": "EchoLingo",
     "slug": "echolingo-app-v2",
-    "version": "1.0.3",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "echolingov2",
@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "usesAppleSignIn": true,
+      "buildNumber": "16",
       "bundleIdentifier": "cn.echolingo.appv2",
       "icon": "./assets/images/icon.png",
       "infoPlist": {
@@ -21,7 +22,7 @@
     },
     "android": {
       "package": "cn.echolingo.appv2",
-      "versionCode": 4,
+      "versionCode": 6,
       "permissions": [
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",

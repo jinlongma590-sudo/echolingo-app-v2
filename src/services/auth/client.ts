@@ -21,6 +21,42 @@ type AuthFailurePayload = {
   hint?: string;
 };
 
+const AUTH_REQUEST_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs: number = AUTH_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const externalSignal = init?.signal ?? null;
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort);
+    }
+  }
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted && (!externalSignal || !externalSignal.aborted)) {
+      throw new Error(`auth_request_timeout_after_${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  }
+}
+
 export class AuthClientError extends Error {
   code?: string;
   status?: number;
@@ -187,7 +223,7 @@ export async function signInWithPassword(email: string, password: string) {
     throw new Error('Supabase Auth 未配置');
   }
 
-  const response = await fetch(`${env.supabaseUrl}/auth/v1/token?grant_type=password`, {
+  const response = await fetchWithTimeout(`${env.supabaseUrl}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -232,7 +268,7 @@ export async function signInWithAppleIdentityToken(identityToken: string, nonce?
     hasNonce: Boolean(nonce),
   });
 
-  const response = await fetch(`${env.supabaseUrl}/auth/v1/token?grant_type=id_token`, {
+  const response = await fetchWithTimeout(`${env.supabaseUrl}/auth/v1/token?grant_type=id_token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -293,7 +329,7 @@ export async function signUpWithPassword(email: string, password: string): Promi
 
   const normalizedEmail = email.trim();
   const installationId = await getOrCreateInstallationId();
-  const response = await fetch(`${env.apiBaseUrl.replace(/\/$/, '')}/api/mobile/auth/signup`, {
+  const response = await fetchWithTimeout(`${env.apiBaseUrl.replace(/\/$/, '')}/api/mobile/auth/signup`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -372,7 +408,7 @@ export async function sendPasswordResetEmail(email: string) {
     throw new Error('Supabase Auth 未配置');
   }
 
-  const response = await fetch(`${env.supabaseUrl}/auth/v1/recover`, {
+  const response = await fetchWithTimeout(`${env.supabaseUrl}/auth/v1/recover`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -391,7 +427,7 @@ export async function sendPasswordResetEmail(email: string) {
 export async function signOut(session: StoredSession | null) {
   if (session?.accessToken) {
     try {
-      await fetch(`${env.supabaseUrl}/auth/v1/logout`, {
+      await fetchWithTimeout(`${env.supabaseUrl}/auth/v1/logout`, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -408,7 +444,7 @@ export async function signOut(session: StoredSession | null) {
 }
 
 async function refreshSession(refreshToken: string) {
-  const response = await fetch(`${env.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+  const response = await fetchWithTimeout(`${env.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

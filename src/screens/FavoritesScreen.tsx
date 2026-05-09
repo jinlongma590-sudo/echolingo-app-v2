@@ -23,6 +23,7 @@ import {
   type FavoriteType,
 } from '@/services/api/favorites';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import { useAppTheme } from '@/theme/AppThemeProvider';
 import {
   BG_CARD,
@@ -323,24 +324,25 @@ export function FavoritesScreen() {
   const sessionExpired = session.authStateReason === 'expired';
 
   const load = useCallback(async () => {
-    const currentSession = session.session;
-    if (!currentSession) return;
+    if (!session.session) return;
 
     setLoading(true);
     setLoadError(false);
 
     try {
-      const raw = await fetchUserFavorites(currentSession);
-      const nextDetails = await fetchFavoriteDetails(currentSession, raw);
+      const { raw, nextDetails } = await retryWithSessionRefresh({
+        request: async (activeSession) => {
+          const raw = await fetchUserFavorites(activeSession);
+          const nextDetails = await fetchFavoriteDetails(activeSession, raw);
+          return { raw, nextDetails };
+        },
+        refreshSession: session.refreshSession,
+        getSession: () => session.session,
+        isUnauthorizedError: isExpiredSessionError,
+      });
       setFavorites(raw);
       setDetails(nextDetails);
-    } catch (error) {
-      if (isExpiredSessionError(error)) {
-        setFavorites([]);
-        setDetails(EMPTY_DETAILS);
-        await session.invalidateSession();
-        return;
-      }
+    } catch {
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -348,6 +350,11 @@ export function FavoritesScreen() {
   }, [session]);
 
   useEffect(() => {
+    if (session.isHydrating) {
+      setLoading(true);
+      return;
+    }
+
     if (!isLoggedIn) {
       setFavorites([]);
       setDetails(EMPTY_DETAILS);
@@ -360,7 +367,7 @@ export function FavoritesScreen() {
     }
 
     void load();
-  }, [isLoggedIn, load, sessionExpired]);
+  }, [isLoggedIn, load, session.isHydrating, sessionExpired]);
 
   const counts = useMemo(
     () => ({
@@ -433,21 +440,18 @@ export function FavoritesScreen() {
 
   const handleRemove = useCallback(
     async (item: FavoriteItem) => {
-      const currentSession = session.session;
-      if (!currentSession) return;
+      if (!session.session) return;
 
       setRemovingId(item.id);
       try {
-        await removeFavoriteByTarget(currentSession, item.target_type, item.target_id);
+        await retryWithSessionRefresh({
+          request: (activeSession) => removeFavoriteByTarget(activeSession, item.target_type, item.target_id),
+          refreshSession: session.refreshSession,
+          getSession: () => session.session,
+          isUnauthorizedError: isExpiredSessionError,
+        });
         setFavorites((prev) => prev.filter((favorite) => favorite.id !== item.id));
-      } catch (error) {
-        if (isExpiredSessionError(error)) {
-          setFavorites([]);
-          setDetails(EMPTY_DETAILS);
-          await session.invalidateSession();
-          return;
-        }
-
+      } catch {
         Alert.alert('取消收藏失败', '请稍后再试。');
       } finally {
         setRemovingId(null);
@@ -480,7 +484,7 @@ export function FavoritesScreen() {
     </View>
   );
 
-  if (!isLoggedIn && !sessionExpired) {
+  if (!session.isHydrating && !isLoggedIn && !sessionExpired) {
     return (
       <AppScreenShell
         header={header}

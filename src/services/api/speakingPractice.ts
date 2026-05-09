@@ -412,12 +412,14 @@ export async function getSpeakingRealtimeToken(
     aiRole: string;
     systemPrompt: string;
   },
+  options?: { signal?: AbortSignal },
 ) {
   return fetchSpeakingApiJson<SpeakingV2RealtimeTokenResponse>(
     '/api/ai-practice/realtime/token',
     session,
     {
       method: 'POST',
+      signal: options?.signal,
       body: JSON.stringify({
         scenarioId: input.scenarioId,
         scenarioName: input.scenarioName,
@@ -431,12 +433,19 @@ export async function getSpeakingRealtimeToken(
 
 export async function createSpeakingRealtimeCall(
   input: SpeakingV2RealtimeCallRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<SpeakingV2RealtimeCallResponse> {
+  if (options?.signal?.aborted) {
+    const error = new Error('Realtime calls request aborted.');
+    error.name = 'AbortError';
+    throw error;
+  }
   const url = buildSpeakingApiUrl('/api/ai-practice/realtime/calls');
   console.log('[V2_RUNTIME] calls:url', url);
   console.log('[V2_RUNTIME] calls:request', input.sdp.length);
   const response = await fetch(url, {
     method: 'POST',
+    signal: options?.signal,
     headers: {
       Authorization: `Bearer ${input.ephemeralKey}`,
       'Content-Type': 'application/sdp',

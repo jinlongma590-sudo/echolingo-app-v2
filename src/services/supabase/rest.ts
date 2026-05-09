@@ -21,6 +21,8 @@ export function parseCount(headers: Headers) {
   return total ? Number(total) || 0 : 0;
 }
 
+const DEFAULT_SUPABASE_TIMEOUT_MS = 8000;
+
 export async function supabaseFetchJson<T>(
   path: string,
   init?: RequestInit,
@@ -31,10 +33,38 @@ export async function supabaseFetchJson<T>(
   headers.set('apikey', env.supabaseAnonKey);
   headers.set('Authorization', `Bearer ${accessToken ?? env.supabaseAnonKey}`);
 
-  const response = await fetch(buildSupabaseUrl(path), {
-    ...init,
-    headers,
-  });
+  const externalSignal = init?.signal ?? null;
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, DEFAULT_SUPABASE_TIMEOUT_MS);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort);
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(buildSupabaseUrl(path), {
+      ...init,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted && (!externalSignal || !externalSignal.aborted)) {
+      throw new Error(`supabase_request_timeout_after_${DEFAULT_SUPABASE_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  }
 
   if (!response.ok) {
     const text = await response.text();

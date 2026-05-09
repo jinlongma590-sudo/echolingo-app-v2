@@ -10,7 +10,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppText } from '@/components/AppText';
-import { COACH_PROFILES, type CoachProfileId } from '@/data/coachProfiles';
 import type { Scenario } from '@/data/scenarios';
 import { useFloatingTabInsets } from '@/hooks/useFloatingTabInsets';
 import { useAppTheme } from '@/theme/AppThemeProvider';
@@ -35,9 +34,7 @@ type SpeakingV2EntryScreenTabletProps = {
   primaryLabel: string;
   entitlementBusy: boolean;
   isLoggedIn: boolean;
-  selectedCoachId: CoachProfileId;
   onSelectScenario: (scenarioId: string) => void;
-  onSelectCoach: (coachId: CoachProfileId) => void;
   onPressBack: () => void;
   onPressMore: () => void;
   onPressPrimary: () => void;
@@ -108,9 +105,7 @@ export function SpeakingV2EntryScreenTablet({
   primaryLabel,
   entitlementBusy,
   isLoggedIn,
-  selectedCoachId,
   onSelectScenario,
-  onSelectCoach,
   onPressBack,
   onPressMore,
   onPressPrimary,
@@ -243,46 +238,6 @@ export function SpeakingV2EntryScreenTablet({
                     </Pressable>
                   );
                 })}
-
-                <View style={styles.coachSection}>
-                  <AppText style={[styles.sectionTitle, { color: theme.textPrimary }]}>AI Coach</AppText>
-                  {COACH_PROFILES.map((profile) => {
-                    const selected = profile.id === selectedCoachId;
-                    return (
-                      <Pressable
-                        key={profile.id}
-                        accessibilityRole="button"
-                        onPress={() => onSelectCoach(profile.id)}
-                        style={({ pressed }) => [
-                          styles.coachRow,
-                          {
-                            backgroundColor: selected
-                              ? theme.colorScheme === 'dark'
-                                ? 'rgba(10,132,255,0.16)'
-                                : '#EFF6FF'
-                              : theme.cardBackground,
-                            borderColor: selected ? 'rgba(10,132,255,0.28)' : 'rgba(15,23,42,0.06)',
-                          },
-                          pressed && styles.buttonPressed,
-                        ]}
-                      >
-                        <View style={styles.coachCopy}>
-                          <AppText style={[styles.coachTitle, { color: selected ? '#0A84FF' : theme.textPrimary }]}>
-                            {profile.name}
-                          </AppText>
-                          <AppText style={[styles.coachSubtitle, { color: theme.textSecondary }]} numberOfLines={2}>
-                            {profile.description}
-                          </AppText>
-                        </View>
-                        <Ionicons
-                          name={selected ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={22}
-                          color={selected ? '#0A84FF' : theme.textSecondary}
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </View>
               </ScrollView>
             </View>
 
@@ -479,20 +434,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(107,114,128,0.55)',
     marginLeft: 12,
   },
-  coachSection: { marginTop: 16 },
-  coachRow: {
-    minHeight: 76,
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    borderWidth: 1,
-  },
-  coachCopy: { flex: 1, minWidth: 0, marginRight: 12 },
-  coachTitle: { fontSize: 15, lineHeight: 20, fontWeight: '800' },
-  coachSubtitle: { marginTop: 2, fontSize: 12, lineHeight: 16, fontWeight: '500' },
   detailScroll: { flex: 1 },
   detailContent: { paddingBottom: 12 },
   heroCard: {

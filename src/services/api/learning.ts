@@ -35,6 +35,11 @@ export interface LearningRecord {
   reviewCount: number;
 }
 
+export interface UserLearningRecordsBundle {
+  records: LearningRecord[];
+  activities: LearningActivity[];
+}
+
 export interface UpsertLearningProgressInput {
   episodeId: string;
   sentenceId: number;
@@ -143,8 +148,7 @@ export async function upsertLearningProgress(
   }
 }
 
-export async function fetchUserLearningActivity(session: StoredSession): Promise<LearningActivity[]> {
-  const rows = await fetchLearningProgressRows(session);
+function buildLearningActivities(rows: LearningProgressRow[]): LearningActivity[] {
   return rows.map((row) => ({
     episodeId: row.episode_id,
     sentenceId: row.sentence_id ?? null,
@@ -154,9 +158,10 @@ export async function fetchUserLearningActivity(session: StoredSession): Promise
   }));
 }
 
-export async function fetchUserLearningRecords(session: StoredSession): Promise<LearningRecord[]> {
-  const rows = await fetchLearningProgressRows(session);
-
+async function buildLearningRecordsFromRows(
+  session: StoredSession,
+  rows: LearningProgressRow[],
+): Promise<LearningRecord[]> {
   if (rows.length === 0) {
     return [];
   }
@@ -240,4 +245,24 @@ export async function fetchUserLearningRecords(session: StoredSession): Promise<
     })
     .filter((item): item is LearningRecord => item !== null)
     .sort((a, b) => new Date(b.lastReviewedAt ?? 0).getTime() - new Date(a.lastReviewedAt ?? 0).getTime());
+}
+
+export async function fetchUserLearningActivity(session: StoredSession): Promise<LearningActivity[]> {
+  const rows = await fetchLearningProgressRows(session);
+  return buildLearningActivities(rows);
+}
+
+export async function fetchUserLearningRecords(session: StoredSession): Promise<LearningRecord[]> {
+  const rows = await fetchLearningProgressRows(session);
+  return buildLearningRecordsFromRows(session, rows);
+}
+
+export async function fetchUserLearningRecordsBundle(
+  session: StoredSession,
+): Promise<UserLearningRecordsBundle> {
+  const rows = await fetchLearningProgressRows(session);
+  return {
+    records: await buildLearningRecordsFromRows(session, rows),
+    activities: buildLearningActivities(rows),
+  };
 }

@@ -1,10 +1,13 @@
 import {
   AudioModule,
+  AudioQuality,
+  IOSOutputFormat,
   RecordingPresets,
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from 'expo-audio';
+import type { RecordingOptions } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import type { SpeakingRecorderCapability, SpeakingRecordingResult } from '@/types/speaking';
@@ -16,6 +19,88 @@ export interface SpeakingRecorderController {
   stop: () => Promise<SpeakingRecordingResult | null>;
   cleanup: () => Promise<void>;
 }
+
+export type SpeakingRecorderConfigId = 'high_quality_m4a' | 'roast_aac_16k_mono' | 'roast_aac_24k_mono';
+
+export type SpeakingRecorderConfig = {
+  id: SpeakingRecorderConfigId;
+  label: string;
+  mimeType: string;
+  fileName: string;
+  options: RecordingOptions;
+};
+
+function withAndroidFallback(options: RecordingOptions): RecordingOptions {
+  return {
+    ...options,
+    android: {
+      outputFormat: 'mpeg4',
+      audioEncoder: 'aac',
+      sampleRate: options.sampleRate,
+      extension: options.extension,
+    },
+    web: {
+      mimeType: 'audio/mp4',
+      bitsPerSecond: options.bitRate,
+    },
+  };
+}
+
+export const SPEAKING_RECORDER_CONFIGS: Record<SpeakingRecorderConfigId, SpeakingRecorderConfig> = {
+  high_quality_m4a: {
+    id: 'high_quality_m4a',
+    label: 'High m4a 44.1k stereo 128k',
+    mimeType: 'audio/m4a',
+    fileName: 'speaking-recording-high.m4a',
+    options: RecordingPresets.HIGH_QUALITY,
+  },
+  roast_aac_16k_mono: {
+    id: 'roast_aac_16k_mono',
+    label: 'Roast AAC 16k mono 32k',
+    mimeType: 'audio/m4a',
+    fileName: 'roast-recording-16k.m4a',
+    options: withAndroidFallback({
+      extension: '.m4a',
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      bitRate: 32000,
+      android: RecordingPresets.HIGH_QUALITY.android,
+      ios: {
+        extension: '.m4a',
+        sampleRate: 16000,
+        outputFormat: IOSOutputFormat.MPEG4AAC,
+        audioQuality: AudioQuality.LOW,
+        linearPCMBitDepth: 16,
+        linearPCMIsBigEndian: false,
+        linearPCMIsFloat: false,
+      },
+      web: RecordingPresets.HIGH_QUALITY.web,
+    }),
+  },
+  roast_aac_24k_mono: {
+    id: 'roast_aac_24k_mono',
+    label: 'Roast AAC 24k mono 48k',
+    mimeType: 'audio/m4a',
+    fileName: 'roast-recording-24k.m4a',
+    options: withAndroidFallback({
+      extension: '.m4a',
+      sampleRate: 24000,
+      numberOfChannels: 1,
+      bitRate: 48000,
+      android: RecordingPresets.HIGH_QUALITY.android,
+      ios: {
+        extension: '.m4a',
+        sampleRate: 24000,
+        outputFormat: IOSOutputFormat.MPEG4AAC,
+        audioQuality: AudioQuality.MEDIUM,
+        linearPCMBitDepth: 16,
+        linearPCMIsBigEndian: false,
+        linearPCMIsFloat: false,
+      },
+      web: RecordingPresets.HIGH_QUALITY.web,
+    }),
+  },
+};
 
 const RECORDING_DEBUG_PREFIX = '[V1_RECORDING_DEBUG]';
 
@@ -97,7 +182,7 @@ function createUnsupportedRecorder(reason: string): SpeakingRecorderController {
   };
 }
 
-export function createSpeakingRecorder(): SpeakingRecorderController {
+export function createSpeakingRecorder(configId: SpeakingRecorderConfigId = 'high_quality_m4a'): SpeakingRecorderController {
   if (!AudioModule?.AudioRecorder) {
     return createUnsupportedRecorder('当前构建未接通 expo-audio，真机录音不可用。');
   }
@@ -105,12 +190,15 @@ export function createSpeakingRecorder(): SpeakingRecorderController {
   let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
   let isStarting = false;
   let isStopping = false;
+  const config = SPEAKING_RECORDER_CONFIGS[configId] ?? SPEAKING_RECORDER_CONFIGS.high_quality_m4a;
 
   async function ensureRecorder() {
     if (!recorder) {
-      recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+      recorder = new AudioModule.AudioRecorder(config.options);
       debugLog('recording_recorder_created', {
         provider: 'expo-audio',
+        configId: config.id,
+        configLabel: config.label,
       });
     }
     return recorder;
@@ -180,9 +268,10 @@ export function createSpeakingRecorder(): SpeakingRecorderController {
       isStarting = true;
       try {
         await resetAudioMode(true);
-        await activeRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+        await activeRecorder.prepareToRecordAsync(config.options);
         debugLog('recording_prepared', {
           timestamp: new Date().toISOString(),
+          configId: config.id,
           status: summarizeRecorderStatus(activeRecorder.getStatus() as Record<string, unknown>),
         });
         activeRecorder.record();
@@ -254,16 +343,19 @@ export function createSpeakingRecorder(): SpeakingRecorderController {
           uri: resolvedUri,
           durationMs,
           size: fileInfo?.size ?? null,
-          mimeType: 'audio/m4a',
-          fileName: 'speaking-recording.m4a',
+          mimeType: config.mimeType,
+          fileName: config.fileName,
+          configId: config.id,
+          configLabel: config.label,
         });
 
         return {
           uri: resolvedUri,
-          mimeType: 'audio/m4a',
-          fileName: 'speaking-recording.m4a',
+          mimeType: config.mimeType,
+          fileName: config.fileName,
           durationMs,
           size: fileInfo?.size ?? null,
+          configId: config.id,
         };
       } finally {
         isStopping = false;

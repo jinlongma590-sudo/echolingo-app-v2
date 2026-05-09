@@ -57,8 +57,19 @@ export function SignInScreen() {
   };
 
   const handleAppleSignIn = async (identityToken: string, nonce?: string) => {
-    await session.signInWithApple(identityToken, nonce);
-    router.replace('/my');
+    if (submitting) {
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await session.signInWithApple(identityToken, nonce);
+      router.replace('/my');
+    } catch (err) {
+      setError(normalizeAuthErrorMessage(err, 'Apple 登录暂不可用，请稍后重试'));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleAppleSignInError = (message: string) => {

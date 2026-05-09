@@ -20,6 +20,7 @@ import { useEntitlementGuard } from '@/hooks/useEntitlementGuard';
 import { fetchSpeakingCredits, isSpeakingAuthError, type SpeakingCredits } from '@/services/api/speakingPractice';
 import { fetchSpeakingHistory, type SpeakingSession } from '@/services/api/speakingSessions';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import { useAiDataConsent } from '@/services/privacy/AiDataConsentProvider';
 import { SpeakingV1SelectorScreenTablet } from '@/screens/SpeakingV1SelectorScreenTablet';
 import { useAppTheme } from '@/theme/AppThemeProvider';
@@ -132,10 +133,18 @@ export function SpeakingV1SelectorScreen() {
       setLoading(true);
       setError(null);
       try {
-        const [creditsResponse, historyResponse] = await Promise.all([
-          fetchSpeakingCredits(appSession.session),
-          fetchSpeakingHistory(appSession.session),
-        ]);
+        const { creditsResponse, historyResponse } = await retryWithSessionRefresh({
+          request: async (activeSession) => {
+            const [creditsResponse, historyResponse] = await Promise.all([
+              fetchSpeakingCredits(activeSession),
+              fetchSpeakingHistory(activeSession),
+            ]);
+            return { creditsResponse, historyResponse };
+          },
+          refreshSession: appSession.refreshSession,
+          getSession: () => appSession.session,
+          isUnauthorizedError: isSpeakingAuthError,
+        });
         if (cancelled) return;
         setCredits(creditsResponse);
         setHistory(historyResponse);
@@ -148,17 +157,22 @@ export function SpeakingV1SelectorScreen() {
       } catch (nextError) {
         if (cancelled) return;
         if (isSpeakingAuthError(nextError)) {
-          await appSession.invalidateSession();
-          if (cancelled) return;
           setCredits(null);
           setHistory([]);
-          setError(null);
+          setError(nextError.message || '登录状态暂时不可用，请稍后重试。');
           return;
         }
         setError(nextError instanceof Error ? nextError.message : '加载 V1 选择页失败');
       } finally {
         if (!cancelled) setLoading(false);
       }
+    }
+
+    if (appSession.isHydrating) {
+      setLoading(true);
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (isLoggedIn) {
@@ -178,7 +192,7 @@ export function SpeakingV1SelectorScreen() {
     return () => {
       cancelled = true;
     };
-  }, [appSession.session, isLoggedIn, requestedScenarioId]);
+  }, [appSession, appSession.isHydrating, appSession.session, isLoggedIn, requestedScenarioId]);
 
   const availableScenarios = useMemo(() => SCENARIOS.filter((item) => item.id !== 'free-chat'), []);
   const recommendedScenario = useMemo(() => {

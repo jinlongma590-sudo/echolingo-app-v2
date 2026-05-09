@@ -76,6 +76,7 @@ export interface SpeakingRecordingResult {
   fileName: string;
   durationMs?: number | null;
   size?: number | null;
+  configId?: string;
 }
 
 export interface SpeakingRecorderCapability {

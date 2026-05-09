@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 
-import type { StoredSession } from '@/types/auth';
+import type { SessionUser, StoredSession } from '@/types/auth';
 
 export const AUTH_SESSION_SECURE_KEY = 'echolingo.auth.session.v1';
 
@@ -19,10 +19,90 @@ function warn(event: string, error: unknown) {
   console.warn(event, error instanceof Error ? error.message : String(error ?? 'unknown_error'));
 }
 
+type RawStoredSession = {
+  accessToken?: unknown;
+  access_token?: unknown;
+  refreshToken?: unknown;
+  refresh_token?: unknown;
+  expiresAt?: unknown;
+  expires_at?: unknown;
+  tokenType?: unknown;
+  token_type?: unknown;
+  user?: unknown;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeExpiresAt(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        return numeric;
+      }
+
+      const parsedDate = Date.parse(trimmed);
+      if (Number.isFinite(parsedDate)) {
+        return parsedDate;
+      }
+    }
+  }
+
+  return 0;
+}
+
+function normalizeSessionUser(value: unknown): SessionUser | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const id = readString(record.id);
+  if (!id) return null;
+
+  return {
+    id,
+    email: readString(record.email),
+    displayName: readString(record.displayName) ?? readString(record.display_name),
+    avatarUrl: readString(record.avatarUrl) ?? readString(record.avatar_url) ?? readString(record.avatar),
+  };
+}
+
+function normalizeStoredSession(value: unknown): StoredSession | null {
+  const record = asRecord(value) as RawStoredSession | null;
+  if (!record) return null;
+
+  const accessToken = readString(record.accessToken) ?? readString(record.access_token);
+  const refreshToken = readString(record.refreshToken) ?? readString(record.refresh_token);
+  if (!accessToken && !refreshToken) return null;
+
+  const expiresAt = accessToken
+    ? normalizeExpiresAt(record.expiresAt ?? record.expires_at)
+    : 0;
+
+  return {
+    accessToken: accessToken ?? '',
+    refreshToken,
+    expiresAt,
+    tokenType: readString(record.tokenType) ?? readString(record.token_type) ?? 'bearer',
+    user: normalizeSessionUser(record.user),
+  };
+}
+
 function parseSession(raw: string | null) {
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as StoredSession;
+    return normalizeStoredSession(JSON.parse(raw));
   } catch (error) {
     warn('auth_session_secure_parse_failed', error);
     return null;

@@ -17,6 +17,7 @@ import { ChromeIconButton, SurfaceCard } from '@/components/ui/ApplePrimitives';
 import { safeBack } from '@/navigation/safeBack';
 import { fetchCurrentUserProfile, updateUserProfile, type UserProfileSnapshot } from '@/services/api/profile';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import { useAppTheme } from '@/theme/AppThemeProvider';
 import {
   BG_CARD,
@@ -198,20 +199,19 @@ export function ProfileScreen() {
   const sessionExpired = session.authStateReason === 'expired';
 
   const load = useCallback(async () => {
-    const currentSession = session.session;
-    if (!currentSession) return;
+    if (!session.session) return;
 
     setLoading(true);
     setLoadError(false);
     try {
-      const next = await fetchCurrentUserProfile(currentSession);
+      const next = await retryWithSessionRefresh({
+        request: (activeSession) => fetchCurrentUserProfile(activeSession),
+        refreshSession: session.refreshSession,
+        getSession: () => session.session,
+        isUnauthorizedError: isExpiredSessionError,
+      });
       setProfile(next);
-    } catch (error) {
-      if (isExpiredSessionError(error)) {
-        setProfile(null);
-        await session.invalidateSession();
-        return;
-      }
+    } catch {
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -219,6 +219,11 @@ export function ProfileScreen() {
   }, [session]);
 
   useEffect(() => {
+    if (session.isHydrating) {
+      setLoading(true);
+      return;
+    }
+
     if (!isLoggedIn) {
       setProfile(null);
       setLoading(false);
@@ -228,7 +233,7 @@ export function ProfileScreen() {
       return;
     }
     void load();
-  }, [isLoggedIn, load, sessionExpired]);
+  }, [isLoggedIn, load, session.isHydrating, sessionExpired]);
 
   const displayName =
     profile?.name ??
@@ -259,8 +264,7 @@ export function ProfileScreen() {
   };
 
   const handleSave = useCallback(async () => {
-    const currentSession = session.session;
-    if (!currentSession) return;
+    if (!session.session) return;
 
     const nextName = draftName.trim();
     const nextSignature = draftSignature.trim();
@@ -281,19 +285,20 @@ export function ProfileScreen() {
     setSaving(true);
     setSaveError(null);
     try {
-      const nextProfile = await updateUserProfile(currentSession, {
-        displayName: nextName,
-        signature: nextSignature,
+      const nextProfile = await retryWithSessionRefresh({
+        request: (activeSession) =>
+          updateUserProfile(activeSession, {
+            displayName: nextName,
+            signature: nextSignature,
+          }),
+        refreshSession: session.refreshSession,
+        getSession: () => session.session,
+        isUnauthorizedError: isExpiredSessionError,
       });
       setProfile(nextProfile);
       await session.updateSessionUser({ displayName: nextProfile.name ?? nextName });
       setEditorVisible(false);
-    } catch (error) {
-      if (isExpiredSessionError(error)) {
-        setEditorVisible(false);
-        await session.invalidateSession();
-        return;
-      }
+    } catch {
       setSaveError('资料保存失败，请稍后再试');
     } finally {
       setSaving(false);
@@ -308,7 +313,7 @@ export function ProfileScreen() {
     </View>
   );
 
-  if (!isLoggedIn && !sessionExpired) {
+  if (!session.isHydrating && !isLoggedIn && !sessionExpired) {
     return (
       <AppScreenShell header={header} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
         <StateCard

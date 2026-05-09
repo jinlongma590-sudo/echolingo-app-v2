@@ -3,25 +3,53 @@ import 'react-native-reanimated';
 
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AndroidUpdateModal } from '@/components/AndroidUpdateModal';
+import { RootErrorBoundary } from '@/components/RootErrorBoundary';
 import { useAndroidAppUpdateCheck } from '@/hooks/useAndroidAppUpdateCheck';
+import { hideSplashSafe, preventSplashAutoHideSafe } from '@/lib/splashControl';
 import { AppSessionProvider } from '@/services/auth/AppSessionProvider';
 import { AiDataConsentProvider } from '@/services/privacy/AiDataConsentProvider';
 import { AppThemeProvider, useAppTheme } from '@/theme/AppThemeProvider';
 
-// Pre-import the heavy EpisodeScreen module at app start so Metro's
-// lazy-bundling doesn't re-fetch its chunk the first time the user
-// navigates into an episode. The reference is intentionally unused — its
-// only purpose is to force the module into the dependency graph at boot.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { EpisodeScreen as _PrewarmEpisodeScreen } from '@/screens/EpisodeScreen';
+// Hold the native splash screen until the React tree mounts. Hard timeout in
+// splashControl.ts guarantees the splash will hide even if mounting fails so
+// the app can never sit forever on the splash screen during App Store review.
+preventSplashAutoHideSafe();
 
 function RootLayoutContent() {
   const { theme, resolvedColorScheme } = useAppTheme();
   const { updateInfo, dismissUpdate } = useAndroidAppUpdateCheck();
+
+  useEffect(() => {
+    // Hide splash on the next tick so the first frame paints before the
+    // native splash transitions away.
+    const handle = setTimeout(() => {
+      void hideSplashSafe('root_layout_mounted');
+    }, 0);
+    return () => clearTimeout(handle);
+  }, []);
+
+  useEffect(() => {
+    // Defer heavy module pre-warm to after first paint, wrapped in try/catch
+    // so a transitive import failure cannot block app boot. Previously we
+    // imported '@/screens/EpisodeScreen' at module top-level, which made any
+    // side-effect throw deep in its dependency tree fatal to the entire app.
+    const handle = setTimeout(() => {
+      void (async () => {
+        try {
+          await import('@/screens/EpisodeScreen');
+        } catch (error) {
+          console.warn('[boot] episode_screen_prewarm_failed', JSON.stringify({
+            message: error instanceof Error ? error.message : String(error ?? 'unknown'),
+          }));
+        }
+      })();
+    }, 250);
+    return () => clearTimeout(handle);
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.pageBackground }}>
@@ -31,10 +59,6 @@ function RootLayoutContent() {
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.pageBackground } }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="auth/sign-in" options={{ presentation: 'card' }} />
-            {/* simple_push = native iOS push, faster + cheaper than 'card'
-                modal style. animationDuration shortens the slide so the
-                page lands earlier; the route component is pre-imported above
-                to avoid Metro lazy-load latency on first navigation. */}
             <Stack.Screen
               name="episode/[id]"
               options={{
@@ -54,8 +78,10 @@ function RootLayoutContent() {
 
 export default function RootLayout() {
   return (
-    <AppThemeProvider>
-      <RootLayoutContent />
-    </AppThemeProvider>
+    <RootErrorBoundary>
+      <AppThemeProvider>
+        <RootLayoutContent />
+      </AppThemeProvider>
+    </RootErrorBoundary>
   );
 }

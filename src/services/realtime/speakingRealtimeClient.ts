@@ -8,18 +8,36 @@ export interface SpeakingRealtimeClientCapability {
 }
 
 export interface SpeakingRealtimeClientConnectInput {
+  requestId?: string;
+  signal?: AbortSignal;
   ephemeralKey: string;
   model?: string;
   voice?: string;
   sessionInstructions?: string;
   inputTranscriptionPrompt?: string;
-  createCall: (offerSdp: string) => Promise<{ answerSdp: string }>;
+  inputTranscriptionLanguage?: string | null;
+  asrOnly?: boolean;
+  vadSilenceDurationMs?: number;
+  createCall: (offerSdp: string, signal?: AbortSignal) => Promise<{ answerSdp: string }>;
   onEvent?: (event: SpeakingV2TransportEvent) => void;
 }
 
 export interface SpeakingRealtimeResponseRequest {
   instructions?: string;
   metadata?: Record<string, string>;
+}
+
+export interface SpeakingRealtimeAudioDetachStatus {
+  hasPeerConnection: boolean;
+  hasAudioSender: boolean;
+  hadLocalAudioTrack: boolean;
+  localTrackEnabledBefore: boolean | null;
+  localTrackEnabledAfter: boolean | null;
+}
+
+export interface SpeakingRealtimeAudioDetachHandle {
+  status: SpeakingRealtimeAudioDetachStatus;
+  restore: () => Promise<SpeakingRealtimeAudioDetachStatus>;
 }
 
 interface ReactNativeWebRtcModule {
@@ -45,6 +63,8 @@ const SDP_SUMMARY_PREFIXES = [
 
 const DEFAULT_V2_INPUT_TRANSCRIPTION_PROMPT =
   'The speaker is practicing English in an EchoLingo speaking scenario. Transcribe only the English words the user says. Do not translate. Do not output Chinese, Arabic, or any other language. If the audio is unclear, keep the closest English transcription.';
+const DEFAULT_REALTIME_VAD_SILENCE_DURATION_MS = 650;
+const ALLOWED_REALTIME_VAD_SILENCE_DURATION_MS = new Set([500, 550, 650]);
 
 function summarizeSdp(sdp: string) {
   const lines = sdp
@@ -106,6 +126,25 @@ function detectRealtimeCapability(): SpeakingRealtimeClientCapability {
     available: true,
     reason: null,
   };
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function normalizeRealtimeVadSilenceDurationMs(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return ALLOWED_REALTIME_VAD_SILENCE_DURATION_MS.has(parsed)
+    ? parsed
+    : DEFAULT_REALTIME_VAD_SILENCE_DURATION_MS;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const error = new Error('Realtime connect aborted.');
+    error.name = 'AbortError';
+    throw error;
+  }
 }
 
 function extractConversationItemText(item: Record<string, unknown> | null | undefined): string {
@@ -314,7 +353,20 @@ export class SpeakingRealtimeClient {
   private sessionInstructions = '';
   private sessionVoice: string | null = null;
   private inputTranscriptionPrompt = DEFAULT_V2_INPUT_TRANSCRIPTION_PROMPT;
+  private inputTranscriptionLanguage: string | null = 'en';
+  private asrOnly = false;
+  private vadSilenceDurationMs = DEFAULT_REALTIME_VAD_SILENCE_DURATION_MS;
   private localStreamWarmupPromise: Promise<any> | null = null;
+
+  private logRoastRealtimeConnectAbort(phase: string, requestId?: string | null): void {
+    console.log('[ROAST_REALTIME_CONNECT_ABORT]', JSON.stringify({
+      phase,
+      requestId: requestId ?? null,
+      hasPeerConnection: Boolean(this.pc),
+      hasDataChannel: Boolean(this.dc),
+      localAudioTrackCount: this.localStream?.getAudioTracks?.()?.length ?? 0,
+    }));
+  }
 
   async prepareLocalAudio(): Promise<void> {
     if (!this.capability.available) {
@@ -359,6 +411,15 @@ export class SpeakingRealtimeClient {
 
   async connect(input: SpeakingRealtimeClientConnectInput): Promise<void> {
     console.log('[V2][transport] connect:start');
+    const abortSignal = input.signal;
+    const requestId = input.requestId ?? null;
+    const abortListener = () => {
+      this.logRoastRealtimeConnectAbort('abort_requested', requestId);
+      void this.disconnect().then(() => {
+        this.logRoastRealtimeConnectAbort('abort_cleanup_done', requestId);
+      });
+    };
+    abortSignal?.addEventListener?.('abort', abortListener, { once: true });
     if (!input.ephemeralKey?.trim()) {
       throw new Error('缺少 realtime token。');
     }
@@ -370,20 +431,33 @@ export class SpeakingRealtimeClient {
       throw new Error(this.capability.reason || '当前构建缺少 realtime transport 运行时。');
     }
 
-    const previousHandler = this.onEvent;
-    this.onEvent = null;
-    await this.disconnect({ preserveLocalStream: !!this.localStream });
-    this.onEvent = input.onEvent || previousHandler || null;
-    this.sessionInstructions = input.sessionInstructions?.trim() || '';
-    this.inputTranscriptionPrompt = input.inputTranscriptionPrompt?.trim() || DEFAULT_V2_INPUT_TRANSCRIPTION_PROMPT;
+    try {
+      throwIfAborted(abortSignal);
+      const previousHandler = this.onEvent;
+      this.onEvent = null;
+      await this.disconnect({ preserveLocalStream: !!this.localStream });
+      this.onEvent = input.onEvent || previousHandler || null;
+      this.sessionInstructions = input.sessionInstructions?.trim() || '';
+      this.inputTranscriptionPrompt = input.inputTranscriptionPrompt?.trim() || DEFAULT_V2_INPUT_TRANSCRIPTION_PROMPT;
+      this.inputTranscriptionLanguage = input.inputTranscriptionLanguage === undefined ? 'en' : input.inputTranscriptionLanguage;
+      this.asrOnly = input.asrOnly === true;
+      this.vadSilenceDurationMs = normalizeRealtimeVadSilenceDurationMs(input.vadSilenceDurationMs);
+      if (abortSignal?.aborted) {
+        this.logRoastRealtimeConnectAbort('abort_before_peer_create', requestId);
+      }
+      throwIfAborted(abortSignal);
 
-    const pc = new webRtc.RTCPeerConnection({
+      const pc = new webRtc.RTCPeerConnection({
       bundlePolicy: 'max-bundle',
       iceTransportPolicy: 'all',
     });
+      this.pc = pc;
+      if (abortSignal?.aborted) {
+        this.logRoastRealtimeConnectAbort('abort_after_peer_create', requestId);
+      }
+      throwIfAborted(abortSignal);
     console.log('[V2][transport] peer:create');
     this.onEvent?.({ type: 'peer_created' });
-    this.pc = pc;
     this.connected = false;
     this.dataChannelReady = false;
     this.hasRemoteAudioTrack = false;
@@ -468,9 +542,17 @@ export class SpeakingRealtimeClient {
     console.log('[V2_SDP] data-channel:create', 'oai-events');
     this.attachDataChannel(dc);
 
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_before_local_audio', requestId);
+    }
+    throwIfAborted(abortSignal);
     if (!this.localStream) {
       await this.prepareLocalAudio();
     }
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_after_local_audio', requestId);
+    }
+    throwIfAborted(abortSignal);
 
     const tracks = this.localStream?.getTracks?.() || [];
     console.log('[V2_SDP] local-tracks', tracks.length);
@@ -487,10 +569,18 @@ export class SpeakingRealtimeClient {
         }),
       );
     }
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_before_offer', requestId);
+    }
+    throwIfAborted(abortSignal);
 
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
     });
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_after_offer', requestId);
+    }
+    throwIfAborted(abortSignal);
     const offerSummary = summarizeSdp(offer?.sdp || '');
     console.log('[V2_SDP] offer:create', JSON.stringify(offerSummary));
     console.log(
@@ -505,6 +595,10 @@ export class SpeakingRealtimeClient {
       offerLength: offer?.sdp?.length ?? 0,
     });
     await pc.setLocalDescription(offer);
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_before_calls_request', requestId);
+    }
+    throwIfAborted(abortSignal);
     const localDescriptionSummary = summarizeSdp(pc.localDescription?.sdp || offer?.sdp || '');
     console.log('[V2][transport] sdp:offer-ready');
     console.log('[V2_SDP] local-description:set', JSON.stringify(localDescriptionSummary));
@@ -513,7 +607,11 @@ export class SpeakingRealtimeClient {
       type: 'calls_started',
       offerLength: offer?.sdp?.length ?? 0,
     });
-    const answer = await input.createCall(offer?.sdp || '');
+    const answer = await input.createCall(offer?.sdp || '', abortSignal);
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_after_calls_response', requestId);
+    }
+    throwIfAborted(abortSignal);
     if (this.pc !== pc) {
       console.log('[V2][transport] sdp:answer-stale-ignored');
       throw new Error('stale_peer_connection');
@@ -523,6 +621,10 @@ export class SpeakingRealtimeClient {
       answerLength: answer.answerSdp.length,
     });
     console.log('[V2][transport] sdp:answer-received');
+    if (abortSignal?.aborted) {
+      this.logRoastRealtimeConnectAbort('abort_before_remote_description', requestId);
+    }
+    throwIfAborted(abortSignal);
     await pc.setRemoteDescription(new webRtc.RTCSessionDescription({
       type: 'answer',
       sdp: answer.answerSdp,
@@ -539,6 +641,15 @@ export class SpeakingRealtimeClient {
     });
 
     this.armDataChannelTimeout();
+    } catch (caught) {
+      if (abortSignal?.aborted || isAbortError(caught)) {
+        await this.disconnect().catch(() => undefined);
+        this.logRoastRealtimeConnectAbort('abort_cleanup_done', requestId);
+      }
+      throw caught;
+    } finally {
+      abortSignal?.removeEventListener?.('abort', abortListener);
+    }
   }
 
   async disconnect(options?: { preserveLocalStream?: boolean }): Promise<void> {
@@ -589,6 +700,9 @@ export class SpeakingRealtimeClient {
     this.activeResponseId = null;
     this.sessionVoice = null;
     this.inputTranscriptionPrompt = DEFAULT_V2_INPUT_TRANSCRIPTION_PROMPT;
+    this.inputTranscriptionLanguage = 'en';
+    this.asrOnly = false;
+    this.vadSilenceDurationMs = DEFAULT_REALTIME_VAD_SILENCE_DURATION_MS;
     console.log('[V2][transport] disconnect:done');
     this.emitDisconnected();
   }
@@ -607,6 +721,51 @@ export class SpeakingRealtimeClient {
     for (const track of tracks) {
       track.enabled = true;
     }
+  }
+
+  async detachAudioSenderForTtsExperiment(): Promise<SpeakingRealtimeAudioDetachHandle> {
+    const pc = this.pc;
+    const tracks = this.localStream?.getAudioTracks?.() || [];
+    const localTrack = tracks[0] ?? null;
+    const senders = typeof pc?.getSenders === 'function' ? pc.getSenders() : [];
+    const sender = senders.find((candidate: any) =>
+      candidate?.track === localTrack || candidate?.track?.kind === 'audio',
+    ) ?? null;
+    const localTrackEnabledBefore = typeof localTrack?.enabled === 'boolean' ? localTrack.enabled : null;
+
+    if (localTrack) {
+      localTrack.enabled = false;
+    }
+    if (sender?.replaceTrack) {
+      await sender.replaceTrack(null);
+    }
+
+    const status: SpeakingRealtimeAudioDetachStatus = {
+      hasPeerConnection: Boolean(pc),
+      hasAudioSender: Boolean(sender),
+      hadLocalAudioTrack: Boolean(localTrack),
+      localTrackEnabledBefore,
+      localTrackEnabledAfter: typeof localTrack?.enabled === 'boolean' ? localTrack.enabled : null,
+    };
+
+    return {
+      status,
+      restore: async () => {
+        if (sender?.replaceTrack && localTrack) {
+          await sender.replaceTrack(localTrack);
+        }
+        if (localTrack && typeof localTrackEnabledBefore === 'boolean') {
+          localTrack.enabled = localTrackEnabledBefore;
+        }
+        return {
+          hasPeerConnection: Boolean(this.pc),
+          hasAudioSender: Boolean(sender),
+          hadLocalAudioTrack: Boolean(localTrack),
+          localTrackEnabledBefore,
+          localTrackEnabledAfter: typeof localTrack?.enabled === 'boolean' ? localTrack.enabled : null,
+        };
+      },
+    };
   }
 
   interrupt(): void {
@@ -1150,6 +1309,9 @@ export class SpeakingRealtimeClient {
     }
 
     try {
+      const createResponse = !this.asrOnly;
+      const interruptResponse = !this.asrOnly;
+      const silenceDurationMs = normalizeRealtimeVadSilenceDurationMs(this.vadSilenceDurationMs);
       const audio: Record<string, unknown> = {
         input: {
           noise_reduction: {
@@ -1157,20 +1319,20 @@ export class SpeakingRealtimeClient {
           },
           transcription: {
             model: 'gpt-4o-mini-transcribe',
-            language: 'en',
+            ...(this.inputTranscriptionLanguage ? { language: this.inputTranscriptionLanguage } : {}),
             prompt: this.inputTranscriptionPrompt,
           },
           turn_detection: {
             type: 'server_vad',
             threshold: 0.82,
-            silence_duration_ms: 650,
+            silence_duration_ms: silenceDurationMs,
             prefix_padding_ms: 300,
-            create_response: true,
-            interrupt_response: true,
+            create_response: createResponse,
+            interrupt_response: interruptResponse,
           },
         },
       };
-      if (this.sessionVoice) {
+      if (this.sessionVoice && !this.asrOnly) {
         audio.output = {
           voice: this.sessionVoice,
         };
@@ -1180,10 +1342,11 @@ export class SpeakingRealtimeClient {
         JSON.stringify({
           type: 'server_vad',
           threshold: 0.82,
-          silence_duration_ms: 650,
+          silence_duration_ms: silenceDurationMs,
           prefix_padding_ms: 300,
-          create_response: true,
-          interrupt_response: true,
+          create_response: createResponse,
+          interrupt_response: interruptResponse,
+          asrOnly: this.asrOnly,
         }),
       );
       console.log(

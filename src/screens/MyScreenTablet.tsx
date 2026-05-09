@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -19,11 +19,18 @@ import { TopRightAvatarButton } from '@/components/ui/TopRightAvatarButton';
 import { useFloatingTabInsets } from '@/hooks/useFloatingTabInsets';
 import { fetchEpisodeDetail } from '@/services/api/episode';
 import { useMobileMe } from '@/hooks/useMobileMe';
-import { fetchUserLearningRecords, type LearningRecord } from '@/services/api/learning';
+import { type LearningRecord } from '@/services/api/learning';
 import { fetchVocabularyNotebook } from '@/services/api/vocabulary';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
 import * as avatarModule from '@/services/profile/avatar';
 import type { AvatarInputSource } from '@/services/profile/avatar';
+import {
+  fetchSharedLearningRecords,
+  getCachedLearningRecords,
+  isLearningRecordsCacheStale,
+  subscribeLearningRecords,
+  type LearningRecordsSnapshot,
+} from '@/store/learningRecordsStore';
 import { useAppTheme } from '@/theme/AppThemeProvider';
 import { normalizeCoverUrl } from '@/utils/mediaUrl';
 import { MyAccountPanel } from '@/screens/my-panels/MyAccountPanel';
@@ -345,7 +352,23 @@ export function MyScreenTablet({
     [],
   );
 
-  const loadLearningData = useCallback(async () => {
+  const applyLearningSnapshot = useCallback(
+    (nextSnapshot: LearningRecordsSnapshot = getCachedLearningRecords(session.session)) => {
+      if (session.status !== 'authenticated' || !session.session) {
+        return;
+      }
+      setLearningRecords(nextSnapshot.records);
+      setLearningLoading(nextSnapshot.isLoading && nextSnapshot.records.length === 0);
+      setLearningError(nextSnapshot.error);
+    },
+    [session.session, session.status],
+  );
+
+  const loadLearningData = useCallback(async (options?: { force?: boolean }) => {
+    if (session.isHydrating) {
+      return;
+    }
+
     if (session.status !== 'authenticated' || !session.session) {
       setLearningRecords([]);
       setLearningLoading(false);
@@ -356,23 +379,39 @@ export function MyScreenTablet({
       return;
     }
 
-    setLearningLoading(true);
-    setLearningError(null);
+    const cached = getCachedLearningRecords(session.session);
+    applyLearningSnapshot(cached);
+    setLearningLoading(cached.records.length === 0);
+    setLearningError(cached.records.length === 0 ? cached.error : null);
+
     try {
-      const [records, vocabulary] = await Promise.all([
-        fetchUserLearningRecords(session.session!),
+      const [learningSnapshot, vocabulary] = await Promise.all([
+        fetchSharedLearningRecords({
+          session: session.session,
+          refreshSession: session.refreshSession,
+          force: options?.force ?? isLearningRecordsCacheStale(session.session),
+          keepPreviousOnError: true,
+        }),
         fetchVocabularyNotebook(session.session!).catch(() => null),
       ]);
-      setLearningRecords(records);
+      setLearningRecords(learningSnapshot.records);
+      setLearningError(learningSnapshot.error);
       setMyWordsCount(vocabulary ? vocabulary.stats.all : null);
     } catch (error) {
-      setLearningRecords([]);
+      const latest = getCachedLearningRecords(session.session);
+      setLearningRecords(latest.records);
       setLearningError(error instanceof Error ? error.message : '学习档案同步失败');
       setMyWordsCount(null);
     } finally {
       setLearningLoading(false);
     }
-  }, [session.session, session.status]);
+  }, [
+    applyLearningSnapshot,
+    session.isHydrating,
+    session.refreshSession,
+    session.session,
+    session.status,
+  ]);
 
   const runAvatarUpdate = useCallback(
     async (source: AvatarInputSource) => {
@@ -447,6 +486,44 @@ export function MyScreenTablet({
       handleChangeAvatarPress();
     },
     [handleChangeAvatarPress],
+  );
+
+  useEffect(() => {
+    if (session.status !== 'authenticated' || !session.session) {
+      return undefined;
+    }
+
+    const unsubscribe = subscribeLearningRecords((nextSnapshot) => {
+      if (nextSnapshot.userKey !== session.session?.user?.id) {
+        return;
+      }
+      applyLearningSnapshot(nextSnapshot);
+    });
+    applyLearningSnapshot();
+    return unsubscribe;
+  }, [applyLearningSnapshot, session.session, session.status]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        session.isHydrating ||
+        session.status !== 'authenticated' ||
+        !session.session
+      ) {
+        return undefined;
+      }
+
+      const cached = getCachedLearningRecords(session.session);
+      if (cached.error || isLearningRecordsCacheStale(session.session)) {
+        void loadLearningData({ force: Boolean(cached.error) });
+      }
+      return undefined;
+    }, [
+      loadLearningData,
+      session.isHydrating,
+      session.session,
+      session.status,
+    ]),
   );
 
   useEffect(() => {
@@ -916,7 +993,7 @@ export function MyScreenTablet({
           <MySettingsPanel
             onOpenFeedback={onOpenFeedback}
             onRefreshData={async () => {
-              await Promise.all([mobileMe.refresh(), loadLearningData()]);
+              await Promise.all([mobileMe.refresh(), loadLearningData({ force: true })]);
             }}
             isAuthenticated={isAuthenticated}
             onSignedOut={() => setSelectedPanel('overview')}
@@ -947,7 +1024,7 @@ export function MyScreenTablet({
             records={learningRecords}
             loading={learningLoading}
             error={learningError}
-            onReload={loadLearningData}
+            onReload={() => loadLearningData({ force: true })}
           />
         );
       case 'overview':

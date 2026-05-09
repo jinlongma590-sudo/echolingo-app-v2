@@ -1,0 +1,49 @@
+language: objective-c
+osx_image: xcode11
+
+addons:
+  homebrew:
+    packages:
+    - carthage
+    update: true
+
+env:
+  global:
+    - LC_CTYPE=en_US.UTF-8
+    - LANG=en_US.UTF-8
+
+addons:
+  ssh_known_hosts: github.com
+
+notifications:
+  email: false
+
+before_install:
+  - env
+  - locale
+  - gem install cocoapods --no-document --quiet
+  - gem install xcpretty --no-document --quiet
+  - pod --version
+  - pod setup --silent > /dev/null
+  - pod repo update --silent
+  - xcpretty --version
+  - xcodebuild -version
+  - xcodebuild -showsdks
+
+script:
+  - set -o pipefail
+
+  - echo Check if the library described by the podspec can be built
+  - pod lib lint --allow-warnings
+
+  - echo Build as dynamic frameworks
+  - carthage update --configuration DEBUG
+  - xcodebuild build clean -project SDWebImageSVGCoder.xcodeproj -scheme 'SDWebImageSVGCoder iOS' -sdk iphonesimulator PLATFORM_NAME=iphonesimulator -configuration Debug | xcpretty -c
+  - xcodebuild build clean -project SDWebImageSVGCoder.xcodeproj -scheme 'SDWebImageSVGCoder tvOS' -sdk appletvsimulator -configuration Debug | xcpretty -c
+  - xcodebuild build clean -project SDWebImageSVGCoder.xcodeproj -scheme 'SDWebImageSVGCoder macOS' -sdk macosx -configuration Debug | xcpretty -c
+  - xcodebuild build clean -project SDWebImageSVGCoder.xcodeproj -scheme 'SDWebImageSVGCoder watchOS' -sdk watchsimulator -configuration Debug | xcpretty -c
+
+  - echo Build example
+  - pod install --project-directory=Example
+  - xcodebuild build -workspace Example/SDWebImageSVGCoder.xcworkspace -scheme 'SDWebImageSVGCoder-Example' -destination 'platform=iOS Simulator,name=iPhone 11 Pro' -configuration Debug | xcpretty -c
+  - xcodebuild build -workspace Example/SDWebImageSVGCoder.xcworkspace -scheme 'SDWebImageSVGCoder-Example macOS' -destination 'platform=macOS,arch=x86_64' -configuration Debug | xcpretty -c

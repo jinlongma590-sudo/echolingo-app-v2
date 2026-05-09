@@ -9,6 +9,8 @@ import {
   StyleSheet,
   View,
   useWindowDimensions,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -30,7 +32,7 @@ const PAGE_PADDING = 20;
 const PAGE_MAX_WIDTH = 1400;
 const SECTION_GAP = 12;
 const HERO_HEIGHT = 224;
-const SECOND_ROW_HEIGHT = 116;
+const SECOND_ROW_HEIGHT = 82;
 const THIRD_ROW_MIN_HEIGHT = 300;
 type SpeakingScreenTabletProps = {
   credits: SpeakingCredits | null;
@@ -46,6 +48,7 @@ type SpeakingScreenTabletProps = {
   totalTrackedCount: number;
   onStartV1: () => void;
   onStartV2: () => void;
+  onStartRoastCall: () => void;
   onOpenHistory: () => void;
   onOpenMyTab: () => void;
 };
@@ -265,6 +268,8 @@ function EntryCard({
   trailingVariant,
   trailingLabel,
   badgeLabel,
+  iconColor,
+  cardStyle,
 }: {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   iconTint: string;
@@ -274,6 +279,8 @@ function EntryCard({
   trailingVariant: 'chevron' | 'pill';
   trailingLabel?: string;
   badgeLabel?: string;
+  iconColor?: string;
+  cardStyle?: StyleProp<ViewStyle>;
 }) {
   const { theme } = useAppTheme();
   const isDark = theme.colorScheme === 'dark';
@@ -290,6 +297,7 @@ function EntryCard({
           shadowColor: theme.shadowColor,
           shadowOpacity: isDark ? 0.02 : 0.04,
         },
+        cardStyle,
         pressed && styles.cardPressed,
       ]}
     >
@@ -302,7 +310,7 @@ function EntryCard({
           },
         ]}
       >
-        <Ionicons name={icon} size={24} color={theme.primaryBlue} />
+        <Ionicons name={icon} size={24} color={iconColor ?? theme.primaryBlue} />
       </View>
       <View style={styles.entryCopy}>
         <View style={styles.entryTitleRow}>
@@ -329,7 +337,7 @@ function EntryCard({
             },
           ]}
         >
-          <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+          <Ionicons name="chevron-forward" size={14} color={theme.textTertiary} />
         </View>
       ) : (
         <View
@@ -497,6 +505,7 @@ export function SpeakingScreenTablet({
   totalTrackedCount,
   onStartV1,
   onStartV2,
+  onStartRoastCall,
   onOpenHistory,
   onOpenMyTab,
 }: SpeakingScreenTabletProps) {
@@ -523,14 +532,19 @@ export function SpeakingScreenTablet({
     ? require('../../assets/images/home/daily_goal_dark.png')
     : require('../../assets/images/home/ipad_daily_goal_bg.png');
   const syncMessage = error ? error : isLoading ? '正在同步口语数据' : null;
+  const entryGridColumns = 2;
+  const entryGridItemWidth = (contentWidth - SECTION_GAP * (entryGridColumns - 1)) / entryGridColumns;
+  const entryGridRows = Math.ceil(4 / entryGridColumns);
+  const entryGridHeight = entryGridRows * SECOND_ROW_HEIGHT + (entryGridRows - 1) * SECTION_GAP;
   const thirdRowHeight = Math.max(
     THIRD_ROW_MIN_HEIGHT,
-    height - headerTopPadding - 46 - 10 - HERO_HEIGHT - SECTION_GAP - SECOND_ROW_HEIGHT - SECTION_GAP - 12,
+    height - headerTopPadding - 46 - 10 - HERO_HEIGHT - SECTION_GAP - entryGridHeight - SECTION_GAP - 12,
   );
   const pageMinHeight = Math.max(
     height - headerTopPadding - 12,
-    HERO_HEIGHT + SECOND_ROW_HEIGHT + thirdRowHeight + SECTION_GAP * 2,
+    HERO_HEIGHT + entryGridHeight + thirdRowHeight + SECTION_GAP * 2,
   );
+  const entryCardSize = { width: entryGridItemWidth } as const;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, { backgroundColor: theme.pageBackground }]}>
@@ -651,7 +665,7 @@ export function SpeakingScreenTablet({
                 </View>
               </View>
 
-              <View style={styles.secondRow}>
+              <View style={[styles.secondRow, { height: entryGridHeight }]}>
                 <EntryCard
                   icon="chatbubble-ellipses-outline"
                   iconTint="rgba(139,92,246,0.14)"
@@ -659,6 +673,7 @@ export function SpeakingScreenTablet({
                   subtitle="一句一练，逐句评分与纠正"
                   onPress={onStartV1}
                   trailingVariant="chevron"
+                  cardStyle={entryCardSize}
                 />
                 <EntryCard
                   icon="call-outline"
@@ -668,6 +683,17 @@ export function SpeakingScreenTablet({
                   onPress={onStartV2}
                   trailingVariant="chevron"
                   badgeLabel="OpenAI 驱动"
+                  cardStyle={entryCardSize}
+                />
+                <EntryCard
+                  icon="flame"
+                  iconTint="rgba(255,184,107,0.16)"
+                  iconColor="#FF9F43"
+                  title="LA Bro Voice Coach"
+                  subtitle="自由开口练英语，AI 边聊边帮你改。"
+                  onPress={onStartRoastCall}
+                  trailingVariant="chevron"
+                  cardStyle={entryCardSize}
                 />
                 <EntryCard
                   icon="sparkles-outline"
@@ -677,6 +703,7 @@ export function SpeakingScreenTablet({
                   onPress={handleComingSoon}
                   trailingVariant="pill"
                   trailingLabel="打磨中"
+                  cardStyle={entryCardSize}
                 />
               </View>
 
@@ -987,27 +1014,27 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   secondRow: {
-    height: SECOND_ROW_HEIGHT,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: SECTION_GAP,
   },
   entryCard: {
-    flex: 1,
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    height: SECOND_ROW_HEIGHT,
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 18,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 5 },
+    shadowRadius: 10,
+    elevation: 0,
   },
   entryIconBox: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    marginRight: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    marginRight: 12,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1023,22 +1050,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   entryTitle: {
-    fontSize: 20,
-    lineHeight: 26,
+    fontSize: 18,
+    lineHeight: 20,
     fontWeight: '800',
-    letterSpacing: -0.3,
+    letterSpacing: -0.45,
     flexShrink: 1,
     minWidth: 0,
   },
   entrySubtitle: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 18,
+    marginTop: 1,
+    fontSize: 12,
+    lineHeight: 14,
+    fontWeight: '700',
   },
   entryPrimaryBadge: {
-    height: 24,
-    paddingHorizontal: 9,
-    borderRadius: 12,
+    height: 18,
+    paddingHorizontal: 7,
+    borderRadius: 9,
     backgroundColor: 'rgba(0,122,255,0.10)',
     borderColor: 'rgba(0,122,255,0.18)',
     borderWidth: StyleSheet.hairlineWidth,
@@ -1047,33 +1075,33 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   entryPrimaryBadgeText: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '700',
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '800',
   },
   entryChevronBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 12,
   },
   entryMutedBadge: {
-    height: 26,
-    paddingHorizontal: 10,
-    borderRadius: 13,
-    borderWidth: 1,
+    height: 18,
+    paddingHorizontal: 7,
+    borderRadius: 9,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 12,
     flexShrink: 0,
   },
   entryMutedBadgeText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '800',
   },
   thirdRow: {
     flexDirection: 'row',

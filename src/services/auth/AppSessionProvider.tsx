@@ -31,20 +31,31 @@ export function AppSessionProvider({ children }: PropsWithChildren) {
   const [authStateReason, setAuthStateReason] = useState<'expired' | null>(null);
   const refreshInFlightRef = useRef<Promise<StoredSession | null> | null>(null);
   const appStateRef = useRef(AppState.currentState);
+  const authGenerationRef = useRef(0);
+
+  const bumpAuthGeneration = () => {
+    authGenerationRef.current += 1;
+  };
 
   const refreshSession = async () => {
     if (refreshInFlightRef.current) {
       return refreshInFlightRef.current;
     }
 
+    const generationAtStart = authGenerationRef.current;
     setIsHydrating(true);
     const task = (async () => {
       try {
         const next = await hydrateStoredSession();
+        if (authGenerationRef.current !== generationAtStart) {
+          return null;
+        }
+        bumpAuthGeneration();
         setSession(next);
         if (next) {
           setAuthStateReason(null);
         }
+        bumpAuthGeneration();
         return next;
       } finally {
         setIsHydrating(false);
@@ -61,10 +72,12 @@ export function AppSessionProvider({ children }: PropsWithChildren) {
   };
 
   const invalidateSession = async () => {
+    bumpAuthGeneration();
     await clearPersistedSession();
     setSession(null);
     setAuthStateReason('expired');
     setIsHydrating(false);
+    bumpAuthGeneration();
   };
 
   useEffect(() => {
@@ -98,26 +111,34 @@ export function AppSessionProvider({ children }: PropsWithChildren) {
       session,
       signIn: async (email, password) => {
         const next = await signInWithPassword(email, password);
+        bumpAuthGeneration();
         setSession(next);
         setAuthStateReason(null);
+        bumpAuthGeneration();
       },
       signInWithApple: async (identityToken, nonce) => {
         const next = await signInWithAppleIdentityToken(identityToken, nonce);
+        bumpAuthGeneration();
         setSession(next);
         setAuthStateReason(null);
+        bumpAuthGeneration();
       },
       signUp: async (email, password) => {
         const next = await signUpWithPassword(email, password);
         if (next) {
+          bumpAuthGeneration();
           setSession(next);
           setAuthStateReason(null);
+          bumpAuthGeneration();
         }
         return next;
       },
       signOut: async () => {
+        bumpAuthGeneration();
         await signOut(session);
         setSession(null);
         setAuthStateReason(null);
+        bumpAuthGeneration();
       },
       refreshSession,
       invalidateSession,
@@ -130,8 +151,10 @@ export function AppSessionProvider({ children }: PropsWithChildren) {
             ...patch,
           },
         };
+        bumpAuthGeneration();
         setSession(nextSession);
         await persistStoredSession(nextSession);
+        bumpAuthGeneration();
       },
     }),
     [authStateReason, isHydrating, session],

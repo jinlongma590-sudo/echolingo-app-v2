@@ -1,13 +1,21 @@
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { SCENARIOS } from '@/data/scenarios';
 import type { DailyGoalSource } from '@/hooks/useDailyGoalTracker';
 import { useLibraryData } from '@/hooks/useLibraryData';
 import { useVocabularyTodayPlanData } from '@/hooks/useVocabularyTodayPlanData';
-import { fetchUserLearningActivity, fetchUserLearningRecords, type LearningActivity, type LearningRecord } from '@/services/api/learning';
+import { type LearningActivity, type LearningRecord } from '@/services/api/learning';
 import { fetchSpeakingHistory, type SpeakingSession } from '@/services/api/speakingSessions';
 import { fetchVocabularyProgressActivity, type ProgressActivity } from '@/services/api/vocabulary';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import {
+  fetchSharedLearningRecords,
+  getCachedLearningRecords,
+  isLearningRecordsCacheStale,
+  subscribeLearningRecords,
+  type LearningRecordsSnapshot,
+} from '@/store/learningRecordsStore';
 import type { HomeDashboard, HomeRecentLearningItem } from '@/types/homeDashboard';
 import {
   buildDailyRecommendationPool,
@@ -213,10 +221,74 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
   const [speakingRecords, setSpeakingRecords] = useState<SpeakingSession[]>([]);
   const [vocabularyActivities, setVocabularyActivities] = useState<ProgressActivity[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [learningError, setLearningError] = useState<string | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
+
+  const applyLearningSnapshot = useCallback(
+    (nextSnapshot: LearningRecordsSnapshot = getCachedLearningRecords(session.session)) => {
+      if (session.status !== 'authenticated' || !session.session) {
+        return;
+      }
+      setLearningRecords(nextSnapshot.records);
+      setLearningActivities(nextSnapshot.activities);
+      setLearningError(nextSnapshot.records.length === 0 ? nextSnapshot.error : null);
+    },
+    [session.session, session.status],
+  );
+
+  useEffect(() => {
+    if (session.status !== 'authenticated' || !session.session) {
+      return undefined;
+    }
+
+    const unsubscribe = subscribeLearningRecords((nextSnapshot) => {
+      if (nextSnapshot.userKey !== session.session?.user?.id) {
+        return;
+      }
+      applyLearningSnapshot(nextSnapshot);
+    });
+    applyLearningSnapshot();
+    return unsubscribe;
+  }, [applyLearningSnapshot, session.session, session.status]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        session.isHydrating ||
+        session.status !== 'authenticated' ||
+        !session.session
+      ) {
+        return undefined;
+      }
+
+      const cached = getCachedLearningRecords(session.session);
+      if (cached.error || isLearningRecordsCacheStale(session.session)) {
+        void fetchSharedLearningRecords({
+          session: session.session,
+          refreshSession: session.refreshSession,
+          force: Boolean(cached.error),
+          keepPreviousOnError: true,
+        }).catch(() => {
+          // The shared store publishes the failed snapshot for subscribers.
+        });
+      }
+      return undefined;
+    }, [
+      session.isHydrating,
+      session.refreshSession,
+      session.session,
+      session.status,
+    ]),
+  );
 
   useEffect(() => {
     let cancelled = false;
+
+    if (session.isHydrating) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     if (session.status !== 'authenticated' || !session.session) {
       setLearningRecords([]);
@@ -224,6 +296,7 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
       setSpeakingRecords([]);
       setVocabularyActivities([]);
       setActivityLoading(false);
+      setLearningError(null);
       setActivityError(null);
       return () => {
         cancelled = true;
@@ -232,26 +305,42 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
 
     async function load() {
       setActivityLoading(true);
+      setLearningError(null);
       setActivityError(null);
-      const [recordsResult, activityResult, speakingResult, vocabularyResult] = await Promise.allSettled([
-        fetchUserLearningRecords(session.session!),
-        fetchUserLearningActivity(session.session!),
+      const cached = getCachedLearningRecords(session.session!);
+      if (cached.records.length > 0) {
+        setLearningRecords(cached.records);
+        setLearningActivities(cached.activities);
+      }
+
+      const [learningResult, speakingResult, vocabularyResult] = await Promise.allSettled([
+        fetchSharedLearningRecords({
+          session: session.session!,
+          refreshSession: session.refreshSession,
+          force: isLearningRecordsCacheStale(session.session!),
+          keepPreviousOnError: true,
+        }),
         fetchSpeakingHistory(session.session!),
         fetchVocabularyProgressActivity(session.session!),
       ]);
 
       if (cancelled) return;
 
-      if (recordsResult.status === 'fulfilled') {
-        setLearningRecords(recordsResult.value);
+      if (learningResult.status === 'fulfilled') {
+        setLearningRecords(learningResult.value.records);
+        setLearningActivities(learningResult.value.activities);
+        setLearningError(learningResult.value.records.length === 0 ? learningResult.value.error : null);
       } else {
-        setLearningRecords([]);
-      }
-
-      if (activityResult.status === 'fulfilled') {
-        setLearningActivities(activityResult.value);
-      } else {
-        setLearningActivities([]);
+        const latest = getCachedLearningRecords(session.session!);
+        setLearningRecords(latest.records);
+        setLearningActivities(latest.activities);
+        setLearningError(
+          latest.records.length === 0
+            ? learningResult.reason instanceof Error
+              ? learningResult.reason.message
+              : String(learningResult.reason ?? '学习记录加载失败')
+            : null,
+        );
       }
 
       if (speakingResult.status === 'fulfilled') {
@@ -266,7 +355,7 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
         setVocabularyActivities([]);
       }
 
-      const errors = [recordsResult, activityResult, speakingResult, vocabularyResult]
+      const errors = [speakingResult, vocabularyResult]
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason ?? '')))
         .filter(Boolean);
@@ -279,7 +368,7 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
     return () => {
       cancelled = true;
     };
-  }, [session.session, session.status]);
+  }, [session.isHydrating, session.refreshSession, session.session, session.status]);
 
   const dashboard = useMemo<HomeDashboard>(() => {
     const cloudTargetMinutes = todayPlan?.plan.dailyMinutesTarget ?? 0;
@@ -358,7 +447,7 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
         vocabularyPlanLoading ||
         activityLoading ||
         !options.localGoalLoaded,
-      error: libraryError || vocabularyPlanError || activityError,
+      error: libraryError || vocabularyPlanError || learningError || activityError,
       goal: {
         targetMinutes,
         targetUnits,
@@ -402,6 +491,7 @@ export function useHomeDashboard(options: UseHomeDashboardOptions): UseHomeDashb
     activityLoading,
     episodes,
     learningActivities,
+    learningError,
     learningRecords,
     libraryError,
     libraryIsEmptyResult,

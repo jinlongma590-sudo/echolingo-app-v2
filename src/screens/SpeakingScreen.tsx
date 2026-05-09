@@ -217,6 +217,10 @@ export function SpeakingScreen() {
   }, [dashboardSummary]);
 
   const loadDashboard = useCallback(async (options?: { silent?: boolean; force?: boolean }) => {
+    if (session.isHydrating) {
+      return;
+    }
+
     if (!isLoggedIn || !session.session) {
       dashboardAbortRef.current?.abort();
       dashboardAbortRef.current = null;
@@ -290,7 +294,7 @@ export function SpeakingScreen() {
         loadDashboardRef.current = null;
       }
     }
-  }, [isLoggedIn, session.session]);
+  }, [isLoggedIn, session.isHydrating, session.session]);
 
   useEffect(() => {
     return () => {
@@ -378,7 +382,7 @@ export function SpeakingScreen() {
   );
 
   const recentSubtitle = useMemo(() => {
-    if (!isLoggedIn) {
+    if (!isLoggedIn && !session.isHydrating) {
       return {
         prefix: null,
         highlight: null,
@@ -461,6 +465,12 @@ export function SpeakingScreen() {
     router.push('/speaking/history');
   };
 
+  const handleOpenRoastCall = async () => {
+    const allowed = await aiConsent.requestConsent();
+    if (!allowed) return;
+    router.push('/speaking/roast-call');
+  };
+
   const handleOpenMyTab = () => {
     router.navigate('/my');
   };
@@ -481,6 +491,7 @@ export function SpeakingScreen() {
         totalTrackedCount={totalTrackedCount}
         onStartV1={handleOpenV1}
         onStartV2={handleOpenV2}
+        onStartRoastCall={handleOpenRoastCall}
         onOpenHistory={handleOpenHistory}
         onOpenMyTab={handleOpenMyTab}
       />
@@ -593,6 +604,23 @@ export function SpeakingScreen() {
             <Ionicons name="play-circle" size={18} color={TEXT_ON_DARK} />
             <AppText style={styles.v1CtaText}>进入标准练习</AppText>
           </View>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void handleOpenRoastCall()}
+          style={({ pressed }) => [styles.roastLabCard, pressed && styles.cardPressed]}
+        >
+          <View style={styles.roastLabIcon}>
+            <Ionicons name="flame" size={22} color="#FFB86B" />
+          </View>
+          <View style={styles.roastLabCopy}>
+            <AppText style={styles.roastLabTitle}>LA Bro Voice Coach</AppText>
+            <AppText style={styles.roastLabDescription}>
+              自由开口练英语，AI 边聊边帮你改。
+            </AppText>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.72)" />
         </Pressable>
 
         <View style={styles.historySection}>
@@ -860,6 +888,40 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '700',
     color: TEXT_ON_DARK,
+  },
+  roastLabCard: {
+    marginTop: 14,
+    minHeight: 94,
+    borderRadius: 26,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#120D0A',
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,107,0.18)',
+  },
+  roastLabIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,184,107,0.12)',
+  },
+  roastLabCopy: { flex: 1, minWidth: 0 },
+  roastLabTitle: {
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  roastLabDescription: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.62)',
   },
   v1Card: {
     marginTop: 20,

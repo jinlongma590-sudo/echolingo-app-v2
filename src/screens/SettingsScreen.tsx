@@ -15,6 +15,7 @@ import { safeBack } from '@/navigation/safeBack';
 import { deleteCurrentAccount } from '@/services/api/account';
 import { fetchCurrentUserProfile, type UserProfileSnapshot } from '@/services/api/profile';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import { useAiDataConsent } from '@/services/privacy/AiDataConsentProvider';
 import { useAppTheme, type AppThemeMode } from '@/theme/AppThemeProvider';
 import { useThemeColors } from '@/theme/useThemeColors';
@@ -233,20 +234,19 @@ export function SettingsScreen() {
   const sessionExpired = session.authStateReason === 'expired';
 
   const load = useCallback(async () => {
-    const currentSession = session.session;
-    if (!currentSession) return;
+    if (!session.session) return;
 
     setLoading(true);
     setLoadError(false);
     try {
-      const next = await fetchCurrentUserProfile(currentSession);
+      const next = await retryWithSessionRefresh({
+        request: (activeSession) => fetchCurrentUserProfile(activeSession),
+        refreshSession: session.refreshSession,
+        getSession: () => session.session,
+        isUnauthorizedError: isExpiredSessionError,
+      });
       setProfile(next);
-    } catch (error) {
-      if (isExpiredSessionError(error)) {
-        setProfile(null);
-        await session.invalidateSession();
-        return;
-      }
+    } catch {
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -254,6 +254,11 @@ export function SettingsScreen() {
   }, [session]);
 
   useEffect(() => {
+    if (session.isHydrating) {
+      setLoading(true);
+      return;
+    }
+
     if (!isLoggedIn) {
       setProfile(null);
       setLoading(false);
@@ -263,7 +268,7 @@ export function SettingsScreen() {
       return;
     }
     void load();
-  }, [isLoggedIn, load, sessionExpired]);
+  }, [isLoggedIn, load, session.isHydrating, sessionExpired]);
 
   const email = profile?.email ?? session.user?.email ?? '游客';
   const accountStatusLabel = resolveAccountStatusLabel(isLoggedIn);
@@ -328,7 +333,7 @@ export function SettingsScreen() {
     </View>
   );
 
-  if (!isLoggedIn && !sessionExpired) {
+  if (!session.isHydrating && !isLoggedIn && !sessionExpired) {
     return (
       <AppScreenShell header={header} contentContainerStyle={styles.pageContent} showsVerticalScrollIndicator={false}>
         <StateCard

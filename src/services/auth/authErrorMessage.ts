@@ -137,6 +137,10 @@ export function normalizeAuthErrorMessage(error: unknown, fallback = '操作失�
     return '邮箱格式不正确';
   }
 
+  if (normalized.includes('auth_request_timeout')) {
+    return '网络连接超时，请检查网络后重试';
+  }
+
   if (
     normalized.includes('network request failed') ||
     normalized.includes('failed to fetch') ||

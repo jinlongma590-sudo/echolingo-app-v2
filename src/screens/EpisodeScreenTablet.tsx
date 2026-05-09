@@ -214,13 +214,15 @@ function LoopSheetRow({
   );
 }
 
-function TabletModeTabs({
-  value,
-  onChange,
-}: {
+type TabletModeTabsProps = {
   value: TranscriptMode;
   onChange: (mode: TranscriptMode) => void;
-}) {
+};
+
+const TabletModeTabs = React.memo(function TabletModeTabs({
+  value,
+  onChange,
+}: TabletModeTabsProps) {
   const { theme } = useAppTheme();
   const isDark = theme.colorScheme === 'dark';
 
@@ -247,7 +249,10 @@ function TabletModeTabs({
           return (
             <Pressable
               key={item.key}
-              onPress={() => onChange(item.key)}
+              onPress={() => {
+                if (selected) return;
+                onChange(item.key);
+              }}
               style={({ pressed }) => ({
                 flex: 1,
                 height: 31,
@@ -282,7 +287,7 @@ function TabletModeTabs({
       </View>
     </View>
   );
-}
+});
 
 function VideoHiddenPlaceholder({ episode }: { episode: Episode | null | undefined }) {
   const { theme } = useAppTheme();

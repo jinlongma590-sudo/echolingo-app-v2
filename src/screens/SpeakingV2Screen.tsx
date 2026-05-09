@@ -33,7 +33,7 @@ import {
   StatusPill,
 } from '../components/ui/ApplePrimitives';
 import { PageHeader } from '../components/ui/PageHeader';
-import { COACH_PROFILES, type CoachProfileId } from '../data/coachProfiles';
+import { DEFAULT_COACH_PROFILE_ID } from '../data/coachProfiles';
 import { SCENARIOS } from '../data/scenarios';
 import { useEntitlementGuard } from '../hooks/useEntitlementGuard';
 import { useAiDataConsent } from '../services/privacy/AiDataConsentProvider';
@@ -1249,12 +1249,10 @@ function ReportScreen({
 // ─── Legacy V2 entry page (/speaking/v2) ─────────────────────────────────────
 
 function LegacySpeakingV2Screen({
-  coachProfile,
   scenario,
   runtime: _runtime,
   isLoggedIn,
 }: {
-  coachProfile: (typeof COACH_PROFILES)[number];
   scenario: ScenarioItem;
   runtime: RuntimeType;
   isLoggedIn: boolean;
@@ -1265,7 +1263,6 @@ function LegacySpeakingV2Screen({
   const insets = useSafeAreaInsets();
   const { guardEntry, status: entitlementStatus } = useEntitlementGuard();
   const [activeScenarioId, setActiveScenarioId] = useState(scenario.id);
-  const [activeCoachId, setActiveCoachId] = useState<CoachProfileId>(coachProfile.id);
   const [isSceneSheetMounted, setIsSceneSheetMounted] = useState(false);
   const [accessChecking, setAccessChecking] = useState(false);
   const sceneSheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1276,10 +1273,6 @@ function LegacySpeakingV2Screen({
   }, [scenario.id]);
 
   useEffect(() => {
-    setActiveCoachId(coachProfile.id);
-  }, [coachProfile.id]);
-
-  useEffect(() => {
     return () => {
       if (sceneSheetCloseTimerRef.current) clearTimeout(sceneSheetCloseTimerRef.current);
     };
@@ -1288,10 +1281,6 @@ function LegacySpeakingV2Screen({
   const activeScenario = useMemo(
     () => SCENARIOS.find((item) => item.id === activeScenarioId) ?? scenario,
     [activeScenarioId, scenario],
-  );
-  const activeCoach = useMemo(
-    () => COACH_PROFILES.find((item) => item.id === activeCoachId) ?? COACH_PROFILES[0],
-    [activeCoachId],
   );
   const palette: SpeakingPreparationHeroPalette = useMemo(
     () => resolveSpeakingPreparationHeroPalette(activeScenario.id, theme.colorScheme),
@@ -1352,7 +1341,7 @@ function LegacySpeakingV2Screen({
       if (!ok) return;
       router.push({
         pathname: '/speaking/v2/call',
-        params: { scenarioId: activeScenario.id, coachId: activeCoach.id },
+        params: { scenarioId: activeScenario.id, coachId: DEFAULT_COACH_PROFILE_ID },
       });
     } finally {
       setAccessChecking(false);
@@ -1371,8 +1360,6 @@ function LegacySpeakingV2Screen({
         entitlementBusy={entitlementBusy}
         isLoggedIn={isLoggedIn}
         onSelectScenario={setActiveScenarioId}
-        selectedCoachId={activeCoach.id}
-        onSelectCoach={(coachId) => setActiveCoachId(coachId)}
         onPressBack={handleSpeakingBack}
         onPressMore={() => router.push('/speaking/history')}
         onPressPrimary={() => void primaryAction()}
@@ -1462,45 +1449,6 @@ function LegacySpeakingV2Screen({
               </View>
               <AppText style={[prepStyles.metricValue, { color: theme.textPrimary }]}>实时对话</AppText>
               <AppText style={[prepStyles.metricLabel, { color: theme.textTertiary }]}>结束后同步记录</AppText>
-            </View>
-          </View>
-
-          <View style={prepStyles.goalSection}>
-            <AppText style={[prepStyles.goalEyebrow, { color: theme.textSecondary }]}>AI Coach</AppText>
-
-            <View style={[prepStyles.coachPanel, { backgroundColor: theme.cardBackground, borderColor: theme.border, shadowOpacity: theme.colorScheme === 'dark' ? 0 : 0.025 }]}>
-              {COACH_PROFILES.map((profile) => {
-                const isActive = profile.id === activeCoach.id;
-                return (
-                  <Pressable
-                    key={profile.id}
-                    accessibilityRole="button"
-                    onPress={() => setActiveCoachId(profile.id)}
-                    style={({ pressed }) => [
-                      prepStyles.coachOption,
-                      {
-                        backgroundColor: isActive
-                          ? theme.colorScheme === 'dark'
-                            ? 'rgba(10,132,255,0.18)'
-                            : 'rgba(0,122,255,0.08)'
-                          : theme.secondaryCardBackground,
-                        borderColor: isActive ? 'rgba(10,132,255,0.30)' : theme.border,
-                      },
-                      pressed && { opacity: 0.86 },
-                    ]}
-                  >
-                    <View style={prepStyles.coachOptionCopy}>
-                      <AppText style={[prepStyles.coachOptionTitle, { color: theme.textPrimary }]}>{profile.name}</AppText>
-                      <AppText style={[prepStyles.coachOptionDescription, { color: theme.textSecondary }]}>{profile.description}</AppText>
-                    </View>
-                    <Ionicons
-                      name={isActive ? 'checkmark-circle' : 'ellipse-outline'}
-                      size={20}
-                      color={isActive ? theme.primaryBlue : theme.textTertiary}
-                    />
-                  </Pressable>
-                );
-              })}
             </View>
           </View>
 
@@ -2020,11 +1968,10 @@ function CallStageScreen({
 // ─── Route-bound screens backed by shared V2 runtime ─────────────────────────
 
 export function SpeakingV2EntryScreen() {
-  const { coachProfile, scenario, runtime, isLoggedIn } = useSpeakingV2RuntimeContext();
+  const { scenario, runtime, isLoggedIn } = useSpeakingV2RuntimeContext();
 
   return (
     <LegacySpeakingV2Screen
-      coachProfile={coachProfile}
       scenario={scenario}
       runtime={runtime}
       isLoggedIn={isLoggedIn}
@@ -2234,44 +2181,6 @@ const prepStyles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
-  },
-  coachPanel: {
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(17,17,17,0.06)',
-    padding: 10,
-    gap: 8,
-    shadowColor: '#111827',
-    shadowOpacity: 0.025,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  coachOption: {
-    minHeight: 72,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  coachOptionCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  coachOptionTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '800',
-  },
-  coachOptionDescription: {
-    marginTop: 3,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
   },
   goalRow: {
     flexDirection: 'row',

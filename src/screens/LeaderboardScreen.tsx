@@ -18,6 +18,7 @@ import {
   type MonthlyLeaderboardSnapshot,
 } from '@/services/api/leaderboard';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import { retryWithSessionRefresh } from '@/services/auth/retryWithSessionRefresh';
 import {
   BG_CARD,
   BORDER_SOFT,
@@ -194,23 +195,18 @@ export function LeaderboardScreen() {
   const load = useCallback(async () => {
     setState('loading');
     try {
-      const next = await fetchMonthlyLeaderboard(session.session);
+      const next =
+        isLoggedIn && session.session
+          ? await retryWithSessionRefresh({
+              request: (activeSession) => fetchMonthlyLeaderboard(activeSession),
+              refreshSession: session.refreshSession,
+              getSession: () => session.session,
+              isUnauthorizedError: isLeaderboardAuthOrPermissionError,
+            })
+          : await fetchMonthlyLeaderboard(null);
       setSnapshot(next);
       setState(next.leaderboard.length > 0 ? 'ready' : 'empty');
-    } catch (error) {
-      if (isLoggedIn && isLeaderboardAuthOrPermissionError(error)) {
-        await session.invalidateSession();
-        try {
-          const guestSnapshot = await fetchMonthlyLeaderboard(null);
-          setSnapshot(guestSnapshot);
-          setState(guestSnapshot.leaderboard.length > 0 ? 'ready' : 'empty');
-          return;
-        } catch {
-          setSnapshot(null);
-          setState('error');
-          return;
-        }
-      }
+    } catch {
       setSnapshot(null);
       setState('error');
     }

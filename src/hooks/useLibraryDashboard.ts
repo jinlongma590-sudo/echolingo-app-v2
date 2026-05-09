@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { fetchUserLearningRecords, type LearningRecord } from '@/services/api/learning';
+import { type LearningRecord } from '@/services/api/learning';
 import { useAppSession } from '@/services/auth/AppSessionProvider';
+import {
+  fetchSharedLearningRecords,
+  getCachedLearningRecords,
+  isLearningRecordsCacheStale,
+  subscribeLearningRecords,
+  type LearningRecordsSnapshot,
+} from '@/store/learningRecordsStore';
 import type { LibraryDashboardSnapshot } from '@/types/libraryDashboard';
 import type { EpisodeStub } from '@/types/echolingo';
 import {
@@ -33,43 +41,102 @@ export function useLibraryDashboard(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const applyLearningSnapshot = useCallback(
+    (nextSnapshot: LearningRecordsSnapshot = getCachedLearningRecords(session.session)) => {
+      if (session.status !== 'authenticated' || !session.session) {
+        return;
+      }
+      setRecords(nextSnapshot.records);
+      setLoading(nextSnapshot.isLoading && nextSnapshot.records.length === 0);
+      setError(nextSnapshot.records.length === 0 ? nextSnapshot.error : null);
+    },
+    [session.session, session.status],
+  );
 
+  const loadLearningRecords = useCallback(
+    async (force = false) => {
+      if (session.isHydrating) {
+        return;
+      }
+
+      if (session.status !== 'authenticated' || !session.session) {
+        setRecords([]);
+        setLoading(false);
+        setError(null);
+        return;
+      }
+
+      const cached = getCachedLearningRecords(session.session);
+      applyLearningSnapshot(cached);
+
+      if (!force && cached.fetchedAt && !cached.error && !isLearningRecordsCacheStale(session.session)) {
+        return;
+      }
+
+      try {
+        await fetchSharedLearningRecords({
+          session: session.session,
+          refreshSession: session.refreshSession,
+          force,
+          keepPreviousOnError: true,
+        });
+      } catch {
+        // The shared store has already published the error snapshot.
+      }
+    },
+    [
+      applyLearningSnapshot,
+      session.isHydrating,
+      session.refreshSession,
+      session.session,
+      session.status,
+    ],
+  );
+
+  useEffect(() => {
     if (session.status !== 'authenticated' || !session.session) {
       setRecords([]);
       setLoading(false);
       setError(null);
-      return () => {
-        cancelled = true;
-      };
+      return undefined;
     }
 
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const nextRecords = await fetchUserLearningRecords(session.session!);
-        if (!cancelled) {
-          setRecords(nextRecords);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setRecords([]);
-          setError(err instanceof Error ? err.message : '学习记录加载失败');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    const unsubscribe = subscribeLearningRecords((nextSnapshot) => {
+      if (nextSnapshot.userKey !== session.session?.user?.id) {
+        return;
       }
-    }
+      applyLearningSnapshot(nextSnapshot);
+    });
+    applyLearningSnapshot();
+    return unsubscribe;
+  }, [applyLearningSnapshot, session.session, session.status]);
 
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [session.session, session.status]);
+  useEffect(() => {
+    void loadLearningRecords(false);
+  }, [loadLearningRecords]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        session.isHydrating ||
+        session.status !== 'authenticated' ||
+        !session.session
+      ) {
+        return undefined;
+      }
+
+      const cached = getCachedLearningRecords(session.session);
+      if (cached.error || isLearningRecordsCacheStale(session.session)) {
+        void loadLearningRecords(Boolean(cached.error));
+      }
+      return undefined;
+    }, [
+      loadLearningRecords,
+      session.isHydrating,
+      session.session,
+      session.status,
+    ]),
+  );
 
   const snapshot = useMemo<LibraryDashboardSnapshot>(() => {
     const completedEpisodeIds = records
