@@ -1,5 +1,6 @@
 node_modules
 .expo
+.skia-cache/
 dist
 ios/build/
 ios/Pods/
